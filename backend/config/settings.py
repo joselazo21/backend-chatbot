@@ -53,6 +53,23 @@ CELERY_TASK_DEFAULT_QUEUE = "messages"
 CELERY_TASK_IGNORE_RESULT = True
 CELERY_TASK_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_PUBLISH_RETRY = False
+CELERY_BROKER_CONNECTION_TIMEOUT = 2
+CELERY_BEAT_SCHEDULE = {
+    "dispatch-pending-assistant-runs": {
+        "task": "conversations.tasks.dispatch_pending_assistant_runs",
+        "schedule": 30.0,
+    }
+}
+
+LLM_CHAT_URL = os.environ.get("LLM_CHAT_URL", "").strip()
+LLM_MODEL = os.environ.get("LLM_MODEL", "").strip()
+LLM_API_TOKEN = os.environ.get("LLM_API_TOKEN", "")
+LLM_TIMEOUT_SECONDS = int(os.environ.get("LLM_TIMEOUT_SECONDS", "60"))
+if LLM_CHAT_URL and not LLM_MODEL:
+    raise ImproperlyConfigured("LLM_MODEL is required when LLM_CHAT_URL is set")
+if LLM_TIMEOUT_SECONDS < 1:
+    raise ImproperlyConfigured("LLM_TIMEOUT_SECONDS must be positive")
 
 WIDGET_SESSION_TTL_SECONDS = int(os.environ.get("WIDGET_SESSION_TTL_SECONDS", "1800"))
 WIDGET_SESSION_SITE_LIMIT_PER_MINUTE = int(
