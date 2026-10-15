@@ -8,14 +8,25 @@ if not SECRET_KEY:
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
-INSTALLED_APPS: list[str] = []
-MIDDLEWARE: list[str] = []
+SHARED_APPS = [
+    "django_tenants",
+    "django.contrib.contenttypes",
+    "customers",
+]
+TENANT_APPS = [
+    "conversations",
+]
+INSTALLED_APPS = SHARED_APPS + [app for app in TENANT_APPS if app not in SHARED_APPS]
+MIDDLEWARE = ["django_tenants.middleware.main.TenantMainMiddleware"]
 ROOT_URLCONF = "config.urls"
 ASGI_APPLICATION = "config.asgi.application"
+TENANT_MODEL = "customers.Customer"
+TENANT_DOMAIN_MODEL = "customers.Domain"
+DATABASE_ROUTERS = ["django_tenants.routers.TenantSyncRouter"]
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE": "django_tenants.postgresql_backend",
         "NAME": os.environ.get("POSTGRES_DB", "chatbot"),
         "USER": os.environ.get("POSTGRES_USER", "chatbot"),
         "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
