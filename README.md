@@ -2,14 +2,14 @@
 
 Backend para un chatbot multiempresa que podrá atender un widget web y canales de mensajería. El diseño separa el núcleo de conversación de los adaptadores de canales y modelos, usa RAG para consultar documentos y limita las acciones a herramientas MCP autorizadas.
 
-> **Estado:** base Django ASGI con alta de clientes, API de servicio, descubrimiento del dominio API y sesiones públicas temporales del widget. El frontend está en otro repositorio. Aún no hay mensajes, respuestas del modelo ni integraciones de canales.
+> **Estado:** base Django ASGI con alta de clientes, API de servicio, descubrimiento del dominio API, sesiones públicas y almacenamiento de mensajes del widget. El frontend está en otro repositorio. Aún no hay respuestas del modelo ni integraciones de canales.
 
 ## Documentación
 
 - [Arquitectura propuesta](docs/arquitectura-chatbot.md): requisitos, componentes, aislamiento por cliente, canales, modelos, RAG y MCP.
 - [Guía de despliegue](docs/guidelines-despliegue-chatbot.md): decisiones pendientes y controles operativos. Las plantillas de esa guía son orientativas; los archivos ejecutables de este repositorio están en `backend/` y `compose.yaml`.
 - [API de servicio v1](docs/api-servicio-v1.md): alta de clientes, credenciales y rutas disponibles.
-- [Widget público](docs/widget-bootstrap-api.md): registro de sitios, descubrimiento y contrato de las sesiones que consumirá el frontend.
+- [Widget público](docs/widget-bootstrap-api.md): registro de sitios, descubrimiento, sesiones y mensajes que consumirá el frontend.
 
 ## Stack previsto
 
@@ -56,7 +56,7 @@ Para cambiar dependencias, entra en `backend/`, usa `uv add` o `uv remove`, guar
 
 ## Próximo hito
 
-Incorporar el envío y la lectura de mensajes con el token de sesión del widget, seguido del motor de conversación y las primeras tareas de ingesta en una cola y un worker separados. RAG y los canales se incorporarán sobre esa base.
+Conectar los mensajes al motor de conversación para generar respuestas del asistente y transmitirlas al frontend. Después, incorporar las primeras tareas de ingesta en una cola y un worker separados. RAG y los canales se incorporarán sobre esa base.
 
 ## Seguridad y contribuciones
 
