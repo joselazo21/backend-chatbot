@@ -2,6 +2,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django_tenants.utils import get_public_schema_name
 
 from customers.models import Customer, Domain
+from customers.validation import normalize_hostname
 
 
 class Command(BaseCommand):
@@ -11,9 +12,10 @@ class Command(BaseCommand):
         parser.add_argument("--domain", default="localhost")
 
     def handle(self, *args, **options):
-        domain_name = options["domain"].strip().lower()
-        if not domain_name or "://" in domain_name or "/" in domain_name or ":" in domain_name:
-            raise CommandError("--domain must be a hostname without scheme or port")
+        try:
+            domain_name = normalize_hostname(options["domain"])
+        except ValueError as error:
+            raise CommandError(str(error)) from error
 
         public_tenant, _ = Customer.objects.get_or_create(
             schema_name=get_public_schema_name(),
