@@ -5,12 +5,13 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import connection
+from django.test import Client
 from django_tenants.test.cases import TenantTestCase
 from django_tenants.test.client import TenantClient
 from django_tenants.utils import get_public_schema_name, schema_context, tenant_context
 
 from conversations.models import Conversation
-from customers.models import Customer, Domain
+from customers.models import Customer, Domain, WidgetSite
 
 
 class TenantIsolationTests(TenantTestCase):
@@ -133,3 +134,67 @@ class TenantIsolationTests(TenantTestCase):
                 created_customer = Customer.objects.filter(schema_name="test_c").first()
                 if created_customer:
                     created_customer.delete(force_drop=True)
+
+    def test_widget_bootstrap_resolves_only_registered_site(self):
+        with schema_context(get_public_schema_name()):
+            call_command("bootstrap_public_tenant", domain="localhost", stdout=StringIO())
+            output = StringIO()
+            call_command(
+                "create_widget_site",
+                schema=self.tenant.schema_name,
+                origin="https://acme.example.com",
+                stdout=output,
+            )
+            site = WidgetSite.objects.get(tenant=self.tenant)
+            self.assertIn(site.public_key, output.getvalue())
+            call_command(
+                "create_widget_site",
+                schema=self.tenant.schema_name,
+                origin="https://acme.example.com",
+                stdout=StringIO(),
+            )
+            self.assertEqual(WidgetSite.objects.filter(tenant=self.tenant).count(), 1)
+
+        public_client = Client(HTTP_HOST="localhost")
+        url = "/widget/v1/bootstrap"
+        response = public_client.get(
+            url, {"key": site.public_key}, HTTP_ORIGIN="https://acme.example.com"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"api_base_url": "http://tenant.test.com"})
+        self.assertEqual(response["Access-Control-Allow-Origin"], "https://acme.example.com")
+        self.assertEqual(response["Cache-Control"], "no-store")
+        self.assertIn("Origin", response["Vary"])
+        self.assertEqual(
+            TenantClient(self.tenant).post(
+                "/api/v1/conversations/",
+                HTTP_AUTHORIZATION=f"Bearer {site.public_key}",
+            ).status_code,
+            401,
+        )
+
+        self.assertEqual(
+            public_client.get(url, {"key": site.public_key}, HTTP_ORIGIN="https://other.example.com").status_code,
+            404,
+        )
+        self.assertEqual(public_client.get(url, {"key": site.public_key}).status_code, 404)
+        self.assertEqual(
+            public_client.get(
+                url, {"key": site.public_key}, HTTP_ORIGIN="http://acme.example.com"
+            ).status_code,
+            404,
+        )
+        self.assertEqual(
+            TenantClient(self.tenant).get(
+                url, {"key": site.public_key}, HTTP_ORIGIN="https://acme.example.com"
+            ).status_code,
+            404,
+        )
+
+        with schema_context(get_public_schema_name()):
+            site.is_active = False
+            site.save(update_fields=["is_active"])
+        self.assertEqual(
+            public_client.get(url, {"key": site.public_key}, HTTP_ORIGIN="https://acme.example.com").status_code,
+            404,
+        )
