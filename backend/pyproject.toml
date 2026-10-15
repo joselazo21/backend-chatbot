@@ -5,6 +5,8 @@ description = "Backend Django del chatbot multicanal"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "Django>=5.2,<6.0",
+    "psycopg[binary]>=3.2,<4.0",
+    "redis>=5.0,<7.0",
     "uvicorn[standard]>=0.30,<1.0",
 ]
 
