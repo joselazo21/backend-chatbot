@@ -61,6 +61,9 @@ WIDGET_SESSION_SITE_LIMIT_PER_MINUTE = int(
 WIDGET_SESSION_IP_LIMIT_PER_MINUTE = int(
     os.environ.get("WIDGET_SESSION_IP_LIMIT_PER_MINUTE", "10")
 )
+WIDGET_MESSAGE_LIMIT_PER_MINUTE = int(
+    os.environ.get("WIDGET_MESSAGE_LIMIT_PER_MINUTE", "20")
+)
 try:
     WIDGET_FRONTEND_ORIGIN = (
         normalize_origin(os.environ["WIDGET_FRONTEND_ORIGIN"])
@@ -73,8 +76,9 @@ if min(
     WIDGET_SESSION_TTL_SECONDS,
     WIDGET_SESSION_SITE_LIMIT_PER_MINUTE,
     WIDGET_SESSION_IP_LIMIT_PER_MINUTE,
+    WIDGET_MESSAGE_LIMIT_PER_MINUTE,
 ) < 1:
-    raise ImproperlyConfigured("Widget session TTL and limits must be positive")
+    raise ImproperlyConfigured("Widget session TTL and rate limits must be positive")
 
 USE_TZ = True
 TIME_ZONE = "UTC"
