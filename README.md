@@ -2,12 +2,13 @@
 
 Backend para un chatbot multiempresa que podrá atender un widget web y canales de mensajería. El diseño separa el núcleo de conversación de los adaptadores de canales y modelos, usa RAG para consultar documentos y limita las acciones a herramientas MCP autorizadas.
 
-> **Estado:** base Django ASGI con clientes y conversaciones separados por esquema, ruta de salud y entorno local con PostgreSQL, Redis y Celery. Aún no hay API de conversación ni integraciones de canales.
+> **Estado:** base Django ASGI con alta de clientes, una API de servicio para crear y consultar conversaciones, y entorno local con PostgreSQL, Redis y Celery. Aún no hay mensajes, respuestas del modelo ni integraciones de canales.
 
 ## Documentación
 
 - [Arquitectura propuesta](docs/arquitectura-chatbot.md): requisitos, componentes, aislamiento por cliente, canales, modelos, RAG y MCP.
 - [Guía de despliegue](docs/guidelines-despliegue-chatbot.md): decisiones pendientes y controles operativos. Las plantillas de esa guía son orientativas; los archivos ejecutables de este repositorio están en `backend/` y `compose.yaml`.
+- [API de servicio v1](docs/api-servicio-v1.md): alta de clientes, credenciales y rutas disponibles.
 
 ## Stack previsto
 
@@ -42,11 +43,19 @@ La ruta `/health/` comprueba que Django responde para un dominio registrado; no 
 
 `django-tenants` resuelve el cliente a partir del dominio de la petición. Los modelos `Customer` y `Domain` viven en `public`; `Conversation` vive en cada esquema de cliente. Un dominio desconocido devuelve 404. Esta separación lógica aún no es una barrera de permisos entre clientes: el rol de base de datos de la aplicación puede acceder a todos los esquemas.
 
+Para dar de alta un cliente de desarrollo y recibir su credencial de servicio una sola vez:
+
+```powershell
+docker compose run --rm web python manage.py create_customer --schema acme --name Acme --domain acme.localhost
+```
+
+Guarda la credencial fuera del repositorio. La API de servicio acepta `Authorization: Bearer <token>` en el dominio del cliente. La clave es privada y está pensada para llamadas entre servidores; **no la incluyas en el widget**. Si ya tienes un `.env` creado, añade `.localhost` a `DJANGO_ALLOWED_HOSTS` para las pruebas locales. Consulta los ejemplos y la rotación de credenciales en la [guía de la API](docs/api-servicio-v1.md).
+
 Para cambiar dependencias, entra en `backend/`, usa `uv add` o `uv remove`, guarda `pyproject.toml` y `uv.lock`, y reconstruye la imagen.
 
 ## Próximo hito
 
-Implementar un alta de clientes controlada y la primera API de conversaciones, con autorización vinculada al cliente. Después, incorporar las primeras tareas de ingesta en una cola y un worker separados. RAG y los canales se incorporarán sobre esa base.
+Definir y construir la sesión pública del widget con clave pública, sitio permitido, token de corta duración y cuotas. Después, incorporar mensajes, el motor de conversación y las primeras tareas de ingesta en una cola y un worker separados. RAG y los canales se incorporarán sobre esa base.
 
 ## Seguridad y contribuciones
 
