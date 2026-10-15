@@ -1,5 +1,22 @@
 name: backend-chatbot
 
+x-backend: &backend
+  build:
+    context: ./backend
+  image: backend-chatbot:dev
+  env_file: .env
+  environment:
+    POSTGRES_HOST: db
+    REDIS_CACHE_URL: redis://redis:6379/2
+    CELERY_BROKER_URL: redis://redis:6379/0
+  volumes:
+    - ./backend:/app
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
 services:
   db:
     image: pgvector/pgvector:pg17
@@ -32,22 +49,18 @@ services:
       retries: 10
 
   web:
-    build:
-      context: ./backend
-    env_file: .env
-    environment:
-      POSTGRES_HOST: db
-      REDIS_CACHE_URL: redis://redis:6379/2
-    volumes:
-      - ./backend:/app
+    <<: *backend
     command: uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --reload
     ports:
       - "127.0.0.1:8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+
+  worker:
+    <<: *backend
+    command: celery -A config worker --loglevel=INFO --queues=messages
+
+  beat:
+    <<: *backend
+    command: celery -A config beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
 
 volumes:
   postgres_data:

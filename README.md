@@ -2,7 +2,7 @@
 
 Backend para un chatbot multiempresa que podrá atender un widget web y canales de mensajería. El diseño separa el núcleo de conversación de los adaptadores de canales y modelos, usa RAG para consultar documentos y limita las acciones a herramientas MCP autorizadas.
 
-> **Estado:** base Django ASGI con ruta de salud y entorno local con PostgreSQL y Redis. Aún no hay clientes, conversaciones ni integraciones de canales.
+> **Estado:** base Django ASGI con ruta de salud y entorno local con PostgreSQL, Redis y Celery. Aún no hay clientes, conversaciones ni integraciones de canales.
 
 ## Documentación
 
@@ -35,13 +35,13 @@ Invoke-RestMethod http://localhost:8000/health/
 docker compose run --rm web python manage.py test
 ```
 
-La ruta `/health/` comprueba que Django responde; no comprueba la disponibilidad de PostgreSQL ni Redis. El script SQL habilita pgvector al crear por primera vez el volumen de PostgreSQL. El volumen de código y `--reload` son para desarrollo local.
+La ruta `/health/` comprueba que Django responde; no comprueba la disponibilidad de PostgreSQL ni Redis. El script SQL habilita pgvector al crear por primera vez el volumen de PostgreSQL. El volumen de código y `--reload` son para desarrollo local. Celery tiene un worker para la cola `messages` y una instancia de Beat. Por ahora no hay tareas ni horarios configurados, así que ambos quedan a la espera.
 
 Para cambiar dependencias, entra en `backend/`, usa `uv add` o `uv remove`, guarda `pyproject.toml` y `uv.lock`, y reconstruye la imagen.
 
 ## Próximo hito
 
-Conectar Celery al broker Redis y ejecutar workers separados para mensajes e ingesta. Después, añadir el modelo de clientes y dominios, las migraciones por esquema y las pruebas de aislamiento. La lógica de conversación, RAG y los canales se incorporarán sobre esa base.
+Añadir el modelo de clientes y dominios con `django-tenants`, las migraciones por esquema y las pruebas de aislamiento. Después, implementar las primeras tareas de ingesta en una cola y un worker separados. La lógica de conversación, RAG y los canales se incorporarán sobre esa base.
 
 ## Seguridad y contribuciones
 
