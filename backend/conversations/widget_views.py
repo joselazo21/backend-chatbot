@@ -17,7 +17,7 @@ from django_tenants.utils import get_public_schema_name
 from customers.models import WidgetSite
 from customers.validation import normalize_origin
 
-from .models import Conversation, WidgetSession
+from .models import Conversation, Message, WidgetSession
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,56 @@ def _session_creation_allowed(site, request):
         logger.exception("Widget session rate limiter unavailable")
         return None
     return site_ok and ip_ok
+
+
+def _allowed_session_origin(request):
+    if request.tenant.schema_name == get_public_schema_name():
+        raise Http404
+    origin = _request_origin(request)
+    if settings.WIDGET_FRONTEND_ORIGIN and origin == settings.WIDGET_FRONTEND_ORIGIN:
+        if not WidgetSite.objects.filter(tenant=request.tenant, is_active=True).exists():
+            raise Http404
+    else:
+        _site_for_request(request)
+    return origin
+
+
+def _authenticated_session(request, origin):
+    parts = request.headers.get("Authorization", "").split()
+    if (
+        len(parts) != 2
+        or parts[0].lower() != "bearer"
+        or not parts[1].startswith("ws_")
+        or len(parts[1]) > 128
+    ):
+        return None
+    digest = hashlib.sha256(parts[1].encode("utf-8")).hexdigest()
+    session = WidgetSession.objects.filter(
+        token_digest=digest, expires_at__gt=timezone.now()
+    ).first()
+    if session is None:
+        return None
+    site = WidgetSite.objects.filter(
+        pk=session.widget_site_id, tenant=request.tenant, is_active=True
+    ).first()
+    if site is None or origin not in (site.allowed_origin, settings.WIDGET_FRONTEND_ORIGIN):
+        return None
+    return session
+
+
+def _unauthorized(origin, methods, headers):
+    response = JsonResponse({"error": "unauthorized"}, status=401)
+    response["WWW-Authenticate"] = "Bearer"
+    return _cors(response, origin, methods, headers)
+
+
+def _serialize_message(message):
+    return {
+        "id": message.pk,
+        "role": message.role,
+        "content": message.content,
+        "created_at": message.created_at.isoformat(),
+    }
 
 
 @csrf_exempt
@@ -129,38 +179,12 @@ def create_widget_session(request):
 @csrf_exempt
 @require_http_methods(["GET", "DELETE", "OPTIONS"])
 def current_widget_session(request):
-    if request.tenant.schema_name == get_public_schema_name():
-        raise Http404
-    origin = _request_origin(request)
-    is_frontend_origin = bool(settings.WIDGET_FRONTEND_ORIGIN) and origin == settings.WIDGET_FRONTEND_ORIGIN
-    if is_frontend_origin:
-        if not WidgetSite.objects.filter(tenant=request.tenant, is_active=True).exists():
-            raise Http404
-    else:
-        _site_for_request(request)
+    origin = _allowed_session_origin(request)
     if request.method == "OPTIONS":
         return _cors(HttpResponse(status=204), origin, "GET, DELETE", "Authorization")
-
-    parts = request.headers.get("Authorization", "").split()
-    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].startswith("ws_") or len(parts[1]) > 128:
-        response = JsonResponse({"error": "unauthorized"}, status=401)
-        response["WWW-Authenticate"] = "Bearer"
-        return _cors(response, origin, "GET, DELETE", "Authorization")
-    digest = hashlib.sha256(parts[1].encode("utf-8")).hexdigest()
-    session = WidgetSession.objects.select_related("conversation").filter(
-        token_digest=digest, expires_at__gt=timezone.now()
-    ).first()
-    site = (
-        WidgetSite.objects.filter(
-            pk=session.widget_site_id, tenant=request.tenant, is_active=True
-        ).first()
-        if session is not None
-        else None
-    )
-    if site is None or origin not in (site.allowed_origin, settings.WIDGET_FRONTEND_ORIGIN):
-        response = JsonResponse({"error": "unauthorized"}, status=401)
-        response["WWW-Authenticate"] = "Bearer"
-        return _cors(response, origin, "GET, DELETE", "Authorization")
+    session = _authenticated_session(request, origin)
+    if session is None:
+        return _unauthorized(origin, "GET, DELETE", "Authorization")
     if request.method == "DELETE":
         session.delete()
         return _cors(HttpResponse(status=204), origin, "GET, DELETE", "Authorization")
@@ -175,3 +199,82 @@ def current_widget_session(request):
         "GET, DELETE",
         "Authorization",
     )
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST", "OPTIONS"])
+def widget_messages(request):
+    origin = _allowed_session_origin(request)
+    methods = "GET, POST"
+    headers = "Authorization, Content-Type"
+    if request.method == "OPTIONS":
+        return _cors(HttpResponse(status=204), origin, methods, headers)
+
+    session = _authenticated_session(request, origin)
+    if session is None:
+        return _unauthorized(origin, methods, headers)
+
+    if request.method == "GET":
+        raw_cursor = request.GET.get("after_id", "0")
+        if not raw_cursor.isascii() or not raw_cursor.isdecimal() or len(raw_cursor) > 19:
+            return _cors(
+                JsonResponse({"error": "invalid_cursor"}, status=400), origin, methods, headers
+            )
+        cursor = int(raw_cursor)
+        if cursor > 9223372036854775807:
+            return _cors(
+                JsonResponse({"error": "invalid_cursor"}, status=400), origin, methods, headers
+            )
+        messages = list(
+            Message.objects.filter(conversation_id=session.conversation_id, id__gt=cursor)
+            .order_by("id")[:51]
+        )
+        has_more = len(messages) > 50
+        page = messages[:50]
+        return _cors(
+            JsonResponse(
+                {
+                    "messages": [_serialize_message(message) for message in page],
+                    "has_more": has_more,
+                    "next_cursor": page[-1].pk if page else None,
+                }
+            ),
+            origin,
+            methods,
+            headers,
+        )
+
+    if request.content_type != "application/json":
+        return _cors(JsonResponse({"error": "json_required"}, status=415), origin, methods, headers)
+    if len(request.body) > 32768:
+        return _cors(JsonResponse({"error": "body_too_large"}, status=413), origin, methods, headers)
+    try:
+        payload = json.loads(request.body)
+    except (ValueError, UnicodeDecodeError):
+        return _cors(JsonResponse({"error": "invalid_json"}, status=400), origin, methods, headers)
+    if not isinstance(payload, dict) or set(payload) != {"content"} or not isinstance(payload["content"], str):
+        return _cors(JsonResponse({"error": "invalid_request"}, status=400), origin, methods, headers)
+    content = payload["content"].strip()
+    try:
+        content.encode("utf-8")
+    except UnicodeEncodeError:
+        return _cors(JsonResponse({"error": "invalid_content"}, status=400), origin, methods, headers)
+    if not content or len(content) > 4000 or "\x00" in content:
+        return _cors(JsonResponse({"error": "invalid_content"}, status=400), origin, methods, headers)
+
+    try:
+        allowed = _within_limit(
+            f"widget-message:session:{session.pk}", settings.WIDGET_MESSAGE_LIMIT_PER_MINUTE
+        )
+    except Exception:
+        logger.exception("Widget message rate limiter unavailable")
+        return _cors(JsonResponse({"error": "unavailable"}, status=503), origin, methods, headers)
+    if not allowed:
+        response = JsonResponse({"error": "rate_limited"}, status=429)
+        response["Retry-After"] = "60"
+        return _cors(response, origin, methods, headers)
+
+    message = Message.objects.create(
+        conversation_id=session.conversation_id, role=Message.Role.USER, content=content
+    )
+    return _cors(JsonResponse(_serialize_message(message), status=201), origin, methods, headers)

@@ -12,7 +12,7 @@ from django_tenants.utils import get_public_schema_name, schema_context, tenant_
 
 from customers.models import Customer, Domain, WidgetSite
 
-from .models import Conversation, WidgetSession
+from .models import Conversation, Message, WidgetSession
 
 
 class WidgetSessionTests(TenantTestCase):
@@ -21,7 +21,11 @@ class WidgetSessionTests(TenantTestCase):
         cache_patch = patch("conversations.widget_views.cache", self.cache)
         cache_patch.start()
         self.addCleanup(cache_patch.stop)
-        for name in ("WIDGET_SESSION_SITE_LIMIT_PER_MINUTE", "WIDGET_SESSION_IP_LIMIT_PER_MINUTE"):
+        for name in (
+            "WIDGET_SESSION_SITE_LIMIT_PER_MINUTE",
+            "WIDGET_SESSION_IP_LIMIT_PER_MINUTE",
+            "WIDGET_MESSAGE_LIMIT_PER_MINUTE",
+        ):
             limit_patch = patch.object(settings, name, 2)
             limit_patch.start()
             self.addCleanup(limit_patch.stop)
@@ -180,6 +184,14 @@ class WidgetSessionTests(TenantTestCase):
                 **self.origin,
             )
             self.assertEqual(response.status_code, 401)
+            self.assertEqual(
+                other_client.get(
+                    "/widget/v1/messages/",
+                    HTTP_AUTHORIZATION=f"Bearer {token}",
+                    **self.origin,
+                ).status_code,
+                401,
+            )
         finally:
             settings.ALLOWED_HOSTS.remove("session-other.test.com")
             with schema_context(get_public_schema_name()):
@@ -220,3 +232,140 @@ class WidgetSessionTests(TenantTestCase):
         self.assertEqual(response.status_code, 503)
         with tenant_context(self.tenant):
             self.assertEqual(Conversation.objects.count(), 0)
+
+    def test_messages_are_bound_to_the_authenticated_conversation(self):
+        created = self.create_session().json()
+        token = created["access_token"]
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {token}", **self.origin}
+        preflight = self.client.options("/widget/v1/messages/", **self.origin)
+        self.assertEqual(preflight.status_code, 204)
+        self.assertIn("Authorization", preflight["Access-Control-Allow-Headers"])
+        self.assertIn("Content-Type", preflight["Access-Control-Allow-Headers"])
+
+        saved = self.client.post(
+            "/widget/v1/messages/",
+            data=json.dumps({"content": "  Hola  "}),
+            content_type="application/json",
+            **auth,
+        )
+        self.assertEqual(saved.status_code, 201)
+        self.assertEqual(saved.json()["role"], "user")
+        self.assertEqual(saved.json()["content"], "Hola")
+        with tenant_context(self.tenant):
+            message = Message.objects.get(pk=saved.json()["id"])
+            self.assertEqual(str(message.conversation_id), created["conversation_id"])
+
+        listing = self.client.get("/widget/v1/messages/", **auth)
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json()["messages"], [saved.json()])
+        self.assertEqual(listing.json()["next_cursor"], saved.json()["id"])
+        self.assertFalse(listing.json()["has_more"])
+        self.assertEqual(
+            self.client.get(
+                "/widget/v1/messages/", {"after_id": saved.json()["id"]}, **auth
+            ).json()["messages"],
+            [],
+        )
+
+        other_token = self.create_session().json()["access_token"]
+        self.assertEqual(
+            self.client.get(
+                "/widget/v1/messages/",
+                HTTP_AUTHORIZATION=f"Bearer {other_token}",
+                **self.origin,
+            ).json()["messages"],
+            [],
+        )
+        self.assertEqual(self.client.get("/widget/v1/messages/", **self.origin).status_code, 401)
+        self.assertEqual(
+            self.client.get(
+                "/widget/v1/messages/",
+                HTTP_AUTHORIZATION=f"Bearer {token}",
+                HTTP_ORIGIN="https://other.example.com",
+            ).status_code,
+            404,
+        )
+
+    def test_message_validation_rate_limit_and_revocation(self):
+        token = self.create_session().json()["access_token"]
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {token}", **self.origin}
+        self.assertEqual(
+            self.client.post(
+                "/widget/v1/messages/", data="{}", content_type="text/plain", **auth
+            ).status_code,
+            415,
+        )
+        for payload in (
+            {"content": " "},
+            {"content": "x" * 4001},
+            {"content": "hi\x00"},
+            {"content": "\ud800"},
+            {"role": "assistant", "content": "hi"},
+        ):
+            self.assertEqual(
+                self.client.post(
+                    "/widget/v1/messages/", data=json.dumps(payload), content_type="application/json", **auth
+                ).status_code,
+                400,
+            )
+        self.assertEqual(
+            self.client.post(
+                "/widget/v1/messages/", data="{", content_type="application/json", **auth
+            ).status_code,
+            400,
+        )
+        for cursor in ("-1", "abc", "9999999999999999999"):
+            self.assertEqual(
+                self.client.get("/widget/v1/messages/", {"after_id": cursor}, **auth).status_code,
+                400,
+            )
+        for _ in range(2):
+            self.assertEqual(
+                self.client.post(
+                    "/widget/v1/messages/",
+                    data=json.dumps({"content": "Hola"}),
+                    content_type="application/json",
+                    **auth,
+                ).status_code,
+                201,
+            )
+        limited = self.client.post(
+            "/widget/v1/messages/",
+            data=json.dumps({"content": "Hola"}),
+            content_type="application/json",
+            **auth,
+        )
+        self.assertEqual(limited.status_code, 429)
+        self.assertEqual(limited["Retry-After"], "60")
+        with tenant_context(self.tenant):
+            self.assertEqual(Message.objects.count(), 2)
+        self.assertEqual(self.client.delete("/widget/v1/sessions/current", **auth).status_code, 204)
+        self.assertEqual(self.client.get("/widget/v1/messages/", **auth).status_code, 401)
+
+    def test_message_history_is_paginated_and_includes_assistant_entries(self):
+        token = self.create_session().json()["access_token"]
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {token}", **self.origin}
+        with tenant_context(self.tenant):
+            session = WidgetSession.objects.get(
+                token_digest=hashlib.sha256(token.encode()).hexdigest()
+            )
+            Message.objects.bulk_create(
+                [
+                    Message(
+                        conversation_id=session.conversation_id,
+                        role=Message.Role.ASSISTANT if number % 2 else Message.Role.USER,
+                        content=f"Mensaje {number}",
+                    )
+                    for number in range(51)
+                ]
+            )
+        first = self.client.get("/widget/v1/messages/", **auth).json()
+        self.assertEqual(len(first["messages"]), 50)
+        self.assertTrue(first["has_more"])
+        self.assertEqual(first["messages"][1]["role"], "assistant")
+        second = self.client.get(
+            "/widget/v1/messages/", {"after_id": first["next_cursor"]}, **auth
+        ).json()
+        self.assertEqual(len(second["messages"]), 1)
+        self.assertFalse(second["has_more"])
+        self.assertEqual(second["messages"][0]["content"], "Mensaje 50")
