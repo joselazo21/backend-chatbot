@@ -2,14 +2,14 @@
 
 Backend para un chatbot multiempresa que podrá atender un widget web y canales de mensajería. El diseño separa el núcleo de conversación de los adaptadores de canales y modelos, usa RAG para consultar documentos y limita las acciones a herramientas MCP autorizadas.
 
-> **Estado:** base Django ASGI con alta de clientes, API de servicio, descubrimiento del dominio API, sesiones públicas y almacenamiento de mensajes del widget. El frontend está en otro repositorio. Aún no hay respuestas del modelo ni integraciones de canales.
+> **Estado:** base Django ASGI con alta de clientes, API de servicio, sesiones y mensajes del widget, y procesamiento de respuestas mediante Celery y un adaptador HTTP de chat compatible con OpenAI. La URL del LLM aún no está configurada. El frontend está en otro repositorio; faltan RAG, herramientas, streaming e integraciones de canales.
 
 ## Documentación
 
 - [Arquitectura propuesta](docs/arquitectura-chatbot.md): requisitos, componentes, aislamiento por cliente, canales, modelos, RAG y MCP.
 - [Guía de despliegue](docs/guidelines-despliegue-chatbot.md): decisiones pendientes y controles operativos. Las plantillas de esa guía son orientativas; los archivos ejecutables de este repositorio están en `backend/` y `compose.yaml`.
 - [API de servicio v1](docs/api-servicio-v1.md): alta de clientes, credenciales y rutas disponibles.
-- [Widget público](docs/widget-bootstrap-api.md): registro de sitios, descubrimiento, sesiones y mensajes que consumirá el frontend.
+- [Widget público](docs/widget-bootstrap-api.md): registro de sitios, descubrimiento, sesiones, mensajes y estados de generación que consumirá el frontend.
 
 ## Stack previsto
 
@@ -40,7 +40,7 @@ Invoke-RestMethod http://localhost:8000/health/
 docker compose run --rm web python manage.py test
 ```
 
-La ruta `/health/` comprueba que Django responde para un dominio registrado; no comprueba la disponibilidad de Redis. El comando `bootstrap_public_tenant` puede repetirse sin duplicar el cliente o el dominio. Para aplicar migraciones posteriores a todos los clientes, ejecuta `docker compose run --rm web python manage.py migrate_schemas --noinput` antes de actualizar los procesos. El script SQL habilita pgvector al crear por primera vez el volumen de PostgreSQL. El volumen de código y `--reload` son para desarrollo local. Celery tiene un worker para la cola `messages` y una instancia de Beat. Por ahora no hay tareas ni horarios configurados, así que ambos quedan a la espera.
+La ruta `/health/` comprueba que Django responde para un dominio registrado; no comprueba la disponibilidad de Redis. El comando `bootstrap_public_tenant` puede repetirse sin duplicar el cliente o el dominio. Para aplicar migraciones posteriores a todos los clientes, ejecuta `docker compose run --rm web python manage.py migrate_schemas --noinput` antes de actualizar los procesos. El script SQL habilita pgvector al crear por primera vez el volumen de PostgreSQL. El volumen de código y `--reload` son para desarrollo local. Celery tiene un worker para la cola `messages`; Beat revisa cada 30 segundos las generaciones pendientes. Con `LLM_CHAT_URL` vacío no se envían llamadas al modelo.
 
 `django-tenants` resuelve el cliente a partir del dominio de la petición. Los modelos `Customer` y `Domain` viven en `public`; `Conversation` vive en cada esquema de cliente. Un dominio desconocido devuelve 404. Esta separación lógica aún no es una barrera de permisos entre clientes: el rol de base de datos de la aplicación puede acceder a todos los esquemas.
 
@@ -56,7 +56,7 @@ Para cambiar dependencias, entra en `backend/`, usa `uv add` o `uv remove`, guar
 
 ## Próximo hito
 
-Conectar los mensajes al motor de conversación para generar respuestas del asistente y transmitirlas al frontend. Después, incorporar las primeras tareas de ingesta en una cola y un worker separados. RAG y los canales se incorporarán sobre esa base.
+Configurar y probar el endpoint real del LLM, adaptar su formato HTTP si no ofrece chat compatible con OpenAI y elegir cómo transmitir las respuestas al widget. Después, incorporar RAG, herramientas y canales sobre esa base.
 
 ## Seguridad y contribuciones
 

@@ -73,11 +73,28 @@ Content-Type: application/json
 {"content":"Hola, ¿en qué horario atienden?"}
 ```
 
-La respuesta `201` contiene `id`, `role: "user"`, `content` y `created_at`. El contenido se recorta en los extremos, debe tener entre 1 y 4000 caracteres y el cuerpo JSON no puede superar 32 KiB. El cliente no envía un `conversation_id`: el backend toma la conversación vinculada al token. El límite predeterminado es de 20 mensajes por sesión y minuto; se configura con `WIDGET_MESSAGE_LIMIT_PER_MINUTE`. Un exceso devuelve `429` y `Retry-After: 60`. Si Redis falla, devuelve `503` sin guardar el mensaje.
+La respuesta `201` contiene `id`, `role: "user"`, `content`, `created_at` y `generation_status`. El contenido se recorta en los extremos, debe tener entre 1 y 4000 caracteres y el cuerpo JSON no puede superar 32 KiB. El cliente no envía un `conversation_id`: el backend toma la conversación vinculada al token. El límite predeterminado es de 20 mensajes por sesión y minuto; se configura con `WIDGET_MESSAGE_LIMIT_PER_MINUTE`. Un exceso devuelve `429` y `Retry-After: 60`. Si Redis falla, devuelve `503` sin guardar el mensaje.
 
-`GET /widget/v1/messages/` devuelve `messages`, `has_more` y `next_cursor`. Ordena por ID ascendente y entrega hasta 50 mensajes por página. Para continuar o consultar mensajes nuevos, pasa `?after_id=<next_cursor>`; si todavía no hay mensajes, el cursor es `null`. El historial puede incluir mensajes con `role: "assistant"` cuando el motor de conversación los cree. Un token revocado, caducado o de otro cliente no puede leer ni escribir mensajes. El origen de la página o el origen configurado del iframe pueden llamar a esta ruta con ese token.
+`GET /widget/v1/messages/` devuelve `messages`, `has_more` y `next_cursor`. Ordena por ID ascendente y entrega hasta 50 mensajes por página. Para continuar o consultar mensajes nuevos, pasa `?after_id=<next_cursor>`; si todavía no hay mensajes, el cursor es `null`. Los mensajes `user` incluyen `generation_status`: `unconfigured`, `pending`, `running`, `completed` o `failed`. Si la generación termina, aparece un mensaje nuevo con `role: "assistant"`. Un token revocado, caducado o de otro cliente no puede leer ni escribir mensajes. El origen de la página o el origen configurado del iframe pueden llamar a esta ruta con ese token.
 
-**`201` sólo confirma que se guardó el mensaje del visitante.** Aún no se genera ni se envía una respuesta del asistente; el motor de conversación y el streaming se implementarán después.
+**`201` sólo confirma que se guardó el mensaje del visitante.** Si `generation_status` es `pending`, el worker intentará generar la respuesta de forma asíncrona. El frontend puede consultar `GET /widget/v1/messages/<id>/generation/` con el mismo token para conocer el estado actualizado de ese mensaje, y consultar la lista con `after_id` para recibir la respuesta cuando aparezca. Esa ruta devuelve `message_id` y `status`; un mensaje de otra conversación devuelve 404. Si el estado es `unconfigured`, no se ha encolado ninguna generación. Todavía no hay streaming ni SSE.
+
+## Configurar el LLM
+
+La integración usa por ahora un endpoint HTTP exacto que acepte el formato de chat completions compatible con OpenAI: petición JSON con `model`, `messages` y `stream: false`, y respuesta con `choices[0].message.content`. Configura en el entorno de **web y worker**:
+
+```dotenv
+LLM_CHAT_URL=
+LLM_MODEL=
+LLM_API_TOKEN=
+LLM_TIMEOUT_SECONDS=60
+```
+
+Deja `LLM_CHAT_URL` vacío hasta conocer la ruta real. Al configurarlo también es obligatorio `LLM_MODEL`; `LLM_API_TOKEN` es opcional y, si se establece, se envía como `Authorization: Bearer`. Con los servicios en el mismo proyecto y entorno de Railway, puede usarse el dominio privado y el puerto del servicio LLM. No pongas la URL ni el token del LLM en el frontend. En este primer paso la configuración del modelo es global para el backend, aunque los datos y trabajos siguen aislados por esquema de cliente; la configuración por cliente está pendiente.
+
+Cada mensaje con el LLM configurado crea un trabajo persistente en PostgreSQL. Celery intenta despacharlo enseguida y Beat revisa cada 30 segundos los trabajos pendientes, incluso si falló el envío inicial a Redis. El worker valida el cliente, activa su esquema, recupera hasta 10 turnos de la conversación dentro de un presupuesto de 12 000 caracteres, llama al LLM con un timeout y guarda la respuesta como mensaje `assistant`. Los trabajos se procesan en orden por conversación y no duplican respuestas al repetirse una tarea. Los errores temporales se reintentan hasta tres veces; los errores permanentes terminan en `failed`. Una sesión revocada o un sitio desactivado no inicia una llamada al modelo.
+
+Los mensajes guardados mientras `LLM_CHAT_URL` esté vacío conservan `generation_status: "unconfigured"` y no se enviarán automáticamente al LLM cuando se configure después. No se ha conectado el LLM real aún, porque falta conocer su ruta y confirmar su formato de API.
 
 Si el chat se muestra en un iframe de otro dominio, el script de carga debe crear la sesión desde la página del cliente y entregarle el token al iframe mediante `postMessage` con un `targetOrigin` exacto. Configura `WIDGET_FRONTEND_ORIGIN` con el origen HTTPS del iframe; entonces ese origen podrá usar un token existente para consultar o revocar la sesión, pero no podrá crear sesiones. El iframe debe comprobar el origen de los mensajes que recibe. Mantén el token en memoria y no lo pongas en la URL ni en almacenamiento persistente del navegador. Si no hay iframe, `WIDGET_FRONTEND_ORIGIN` puede quedar vacío.
 
