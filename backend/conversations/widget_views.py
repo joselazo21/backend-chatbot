@@ -17,7 +17,8 @@ from django_tenants.utils import get_public_schema_name
 from customers.models import WidgetSite
 from customers.validation import normalize_origin
 
-from .models import Conversation, Message, WidgetSession
+from .models import AssistantRun, Conversation, Message, WidgetSession
+from .tasks import dispatch_assistant_run
 
 logger = logging.getLogger(__name__)
 
@@ -115,12 +116,18 @@ def _unauthorized(origin, methods, headers):
 
 
 def _serialize_message(message):
-    return {
+    result = {
         "id": message.pk,
         "role": message.role,
         "content": message.content,
         "created_at": message.created_at.isoformat(),
     }
+    if message.role == Message.Role.USER:
+        try:
+            result["generation_status"] = message.assistant_run.status
+        except AssistantRun.DoesNotExist:
+            result["generation_status"] = "unconfigured"
+    return result
 
 
 @csrf_exempt
@@ -227,6 +234,7 @@ def widget_messages(request):
             )
         messages = list(
             Message.objects.filter(conversation_id=session.conversation_id, id__gt=cursor)
+            .select_related("assistant_run")
             .order_by("id")[:51]
         )
         has_more = len(messages) > 50
@@ -274,7 +282,37 @@ def widget_messages(request):
         response["Retry-After"] = "60"
         return _cors(response, origin, methods, headers)
 
-    message = Message.objects.create(
-        conversation_id=session.conversation_id, role=Message.Role.USER, content=content
-    )
+    with transaction.atomic():
+        message = Message.objects.create(
+            conversation_id=session.conversation_id, role=Message.Role.USER, content=content
+        )
+        if settings.LLM_CHAT_URL:
+            run = AssistantRun.objects.create(user_message=message)
+            tenant_id = request.tenant.pk
+            transaction.on_commit(
+                lambda: dispatch_assistant_run(tenant_id, run.pk)
+            )
     return _cors(JsonResponse(_serialize_message(message), status=201), origin, methods, headers)
+
+
+@require_http_methods(["GET", "OPTIONS"])
+def widget_message_generation(request, message_id):
+    origin = _allowed_session_origin(request)
+    if request.method == "OPTIONS":
+        return _cors(HttpResponse(status=204), origin, "GET", "Authorization")
+    session = _authenticated_session(request, origin)
+    if session is None:
+        return _unauthorized(origin, "GET", "Authorization")
+    message = Message.objects.filter(
+        pk=message_id,
+        conversation_id=session.conversation_id,
+        role=Message.Role.USER,
+    ).select_related("assistant_run").first()
+    if message is None:
+        raise Http404
+    return _cors(
+        JsonResponse({"message_id": message.pk, "status": _serialize_message(message)["generation_status"]}),
+        origin,
+        "GET",
+        "Authorization",
+    )

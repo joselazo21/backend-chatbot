@@ -13,6 +13,9 @@ from django_tenants.utils import get_public_schema_name, schema_context, tenant_
 from customers.models import Customer, Domain, WidgetSite
 
 from .models import Conversation, Message, WidgetSession
+from .llm import LLMError
+from .models import AssistantRun
+from .tasks import dispatch_pending_assistant_runs, generate_assistant_reply
 
 
 class WidgetSessionTests(TenantTestCase):
@@ -276,6 +279,14 @@ class WidgetSessionTests(TenantTestCase):
             ).json()["messages"],
             [],
         )
+        self.assertEqual(
+            self.client.get(
+                f"/widget/v1/messages/{saved.json()['id']}/generation/",
+                HTTP_AUTHORIZATION=f"Bearer {other_token}",
+                **self.origin,
+            ).status_code,
+            404,
+        )
         self.assertEqual(self.client.get("/widget/v1/messages/", **self.origin).status_code, 401)
         self.assertEqual(
             self.client.get(
@@ -369,3 +380,147 @@ class WidgetSessionTests(TenantTestCase):
         self.assertEqual(len(second["messages"]), 1)
         self.assertFalse(second["has_more"])
         self.assertEqual(second["messages"][0]["content"], "Mensaje 50")
+
+    def test_unconfigured_model_keeps_message_without_queueing(self):
+        token = self.create_session().json()["access_token"]
+        with patch.object(settings, "LLM_CHAT_URL", ""), patch(
+            "conversations.widget_views.dispatch_assistant_run"
+        ) as dispatch:
+            response = self.client.post(
+                "/widget/v1/messages/",
+                data=json.dumps({"content": "Hola"}),
+                content_type="application/json",
+                HTTP_AUTHORIZATION=f"Bearer {token}",
+                **self.origin,
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["generation_status"], "unconfigured")
+        generation_url = f"/widget/v1/messages/{response.json()['id']}/generation/"
+        self.assertEqual(
+            self.client.get(
+                generation_url, HTTP_AUTHORIZATION=f"Bearer {token}", **self.origin
+            ).json()["status"],
+            "unconfigured",
+        )
+        dispatch.assert_not_called()
+        with tenant_context(self.tenant):
+            self.assertFalse(AssistantRun.objects.exists())
+
+    def test_worker_generates_reply_once_with_ordered_history(self):
+        token = self.create_session().json()["access_token"]
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {token}", **self.origin}
+        with patch.object(settings, "LLM_CHAT_URL", "http://llm.railway.internal:8000/v1/chat/completions"), patch(
+            "conversations.widget_views.dispatch_assistant_run"
+        ) as dispatch:
+            with self.captureOnCommitCallbacks(execute=True):
+                first = self.client.post(
+                    "/widget/v1/messages/", data=json.dumps({"content": "Hola"}),
+                    content_type="application/json", **auth,
+                )
+            self.assertEqual(first.json()["generation_status"], "pending")
+            generation_url = f"/widget/v1/messages/{first.json()['id']}/generation/"
+            self.assertEqual(self.client.options(generation_url, **self.origin).status_code, 204)
+            self.assertEqual(self.client.get(generation_url, **auth).json()["status"], "pending")
+            dispatch.assert_called_once()
+            with tenant_context(self.tenant):
+                first_run = AssistantRun.objects.get(user_message_id=first.json()["id"])
+            with patch("conversations.tasks.generate_reply", return_value="Hola, ¿qué necesitas?") as llm:
+                generate_assistant_reply(self.tenant.pk, first_run.pk)
+                generate_assistant_reply(self.tenant.pk, first_run.pk)
+            llm.assert_called_once_with([{"role": "user", "content": "Hola"}])
+            self.assertEqual(self.client.get(generation_url, **auth).json()["status"], "completed")
+
+            with self.captureOnCommitCallbacks(execute=True):
+                second = self.client.post(
+                    "/widget/v1/messages/", data=json.dumps({"content": "Horario"}),
+                    content_type="application/json", **auth,
+                )
+            with tenant_context(self.tenant):
+                second_run = AssistantRun.objects.get(user_message_id=second.json()["id"])
+            with patch("conversations.tasks.generate_reply", return_value="De 9 a 5") as llm:
+                generate_assistant_reply(self.tenant.pk, second_run.pk)
+            llm.assert_called_once_with([
+                {"role": "user", "content": "Hola"},
+                {"role": "assistant", "content": "Hola, ¿qué necesitas?"},
+                {"role": "user", "content": "Horario"},
+            ])
+
+        listing = self.client.get("/widget/v1/messages/", **auth).json()["messages"]
+        self.assertEqual([message["role"] for message in listing], ["user", "assistant", "user", "assistant"])
+        self.assertEqual(listing[0]["generation_status"], "completed")
+        self.assertEqual(listing[2]["generation_status"], "completed")
+        with tenant_context(self.tenant):
+            self.assertEqual(Message.objects.filter(role=Message.Role.ASSISTANT).count(), 2)
+
+    def test_failed_generation_is_retryable_and_recovered_by_dispatcher(self):
+        token = self.create_session().json()["access_token"]
+        with patch.object(settings, "LLM_CHAT_URL", "http://llm.railway.internal:8000/v1/chat/completions"), patch(
+            "conversations.widget_views.dispatch_assistant_run"
+        ):
+            response = self.client.post(
+                "/widget/v1/messages/", data=json.dumps({"content": "Hola"}),
+                content_type="application/json",
+                HTTP_AUTHORIZATION=f"Bearer {token}", **self.origin,
+            )
+            with tenant_context(self.tenant):
+                run = AssistantRun.objects.get(user_message_id=response.json()["id"])
+            with patch("conversations.tasks.generate_reply", side_effect=LLMError("upstream_unavailable", retryable=True)):
+                generate_assistant_reply(self.tenant.pk, run.pk)
+            with tenant_context(self.tenant):
+                run.refresh_from_db()
+                self.assertEqual(run.status, AssistantRun.Status.PENDING)
+                self.assertEqual(run.attempts, 1)
+                self.assertIsNotNone(run.next_attempt_at)
+                run.next_attempt_at = timezone.now() - timedelta(seconds=1)
+                run.save(update_fields=["next_attempt_at"])
+            with patch("conversations.tasks.dispatch_assistant_run") as dispatch:
+                self.assertGreaterEqual(dispatch_pending_assistant_runs(), 1)
+            dispatch.assert_any_call(self.tenant.pk, run.pk)
+            with patch("conversations.tasks.generate_reply", return_value="Respuesta"):
+                generate_assistant_reply(self.tenant.pk, run.pk)
+            with tenant_context(self.tenant):
+                run.refresh_from_db()
+                self.assertEqual(run.status, AssistantRun.Status.COMPLETED)
+                self.assertEqual(run.assistant_message.content, "Respuesta")
+
+    def test_worker_does_not_call_model_after_session_revocation(self):
+        token = self.create_session().json()["access_token"]
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {token}", **self.origin}
+        with patch.object(settings, "LLM_CHAT_URL", "http://llm.railway.internal:8000/v1/chat/completions"), patch(
+            "conversations.widget_views.dispatch_assistant_run"
+        ), patch("conversations.tasks.generate_reply") as llm:
+            created = self.client.post(
+                "/widget/v1/messages/", data=json.dumps({"content": "Hola"}),
+                content_type="application/json", **auth,
+            )
+            with tenant_context(self.tenant):
+                run = AssistantRun.objects.get(user_message_id=created.json()["id"])
+            self.assertEqual(self.client.delete("/widget/v1/sessions/current", **auth).status_code, 204)
+            generate_assistant_reply(self.tenant.pk, run.pk)
+        llm.assert_not_called()
+        with tenant_context(self.tenant):
+            run.refresh_from_db()
+            self.assertEqual(run.status, AssistantRun.Status.FAILED)
+            self.assertEqual(run.error_code, "session_inactive")
+
+    def test_pending_run_survives_broker_publish_failure(self):
+        token = self.create_session().json()["access_token"]
+        with patch.object(settings, "LLM_CHAT_URL", "http://llm.railway.internal:8000/v1/chat/completions"), patch(
+            "conversations.tasks.generate_assistant_reply.delay",
+            side_effect=ConnectionError("broker unavailable"),
+        ), patch("conversations.tasks.logger.exception"):
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.post(
+                    "/widget/v1/messages/", data=json.dumps({"content": "Hola"}),
+                    content_type="application/json",
+                    HTTP_AUTHORIZATION=f"Bearer {token}", **self.origin,
+                )
+        self.assertEqual(response.status_code, 201)
+        with tenant_context(self.tenant):
+            run = AssistantRun.objects.get(user_message_id=response.json()["id"])
+            self.assertEqual(run.status, AssistantRun.Status.PENDING)
+        with patch.object(settings, "LLM_CHAT_URL", "http://llm.railway.internal:8000/v1/chat/completions"), patch(
+            "conversations.tasks.generate_assistant_reply.delay"
+        ) as publish:
+            self.assertGreaterEqual(dispatch_pending_assistant_runs(), 1)
+        publish.assert_any_call(self.tenant.pk, run.pk)

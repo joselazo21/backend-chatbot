@@ -1,0 +1,175 @@
+"""Persisted assistant runs and their Celery dispatch."""
+
+import logging
+from datetime import timedelta
+
+from celery import shared_task
+from django.conf import settings
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
+from django_tenants.utils import get_public_schema_name, schema_context, tenant_context
+
+from customers.models import Customer, WidgetSite
+
+from .llm import LLMError, generate_reply
+from .models import AssistantRun, Message, WidgetSession
+
+logger = logging.getLogger(__name__)
+MAX_ATTEMPTS = 3
+
+
+def dispatch_assistant_run(tenant_id, run_id):
+    """Best effort fast dispatch; Beat recovers runs if broker publishing fails."""
+    try:
+        generate_assistant_reply.delay(tenant_id, run_id)
+        return True
+    except Exception:
+        logger.exception("Could not enqueue assistant run", extra={"tenant_id": tenant_id, "run_id": run_id})
+        return False
+
+
+def _history_for_run(run):
+    user_messages = list(
+        Message.objects.filter(
+            conversation_id=run.user_message.conversation_id,
+            role=Message.Role.USER,
+            id__lte=run.user_message_id,
+        )
+        .select_related("assistant_run__assistant_message")
+        .order_by("-id")[:10]
+    )
+    turns = []
+    for user_message in reversed(user_messages):
+        pair = [{"role": "user", "content": user_message.content}]
+        try:
+            previous_run = user_message.assistant_run
+        except AssistantRun.DoesNotExist:
+            previous_run = None
+        if previous_run and previous_run.assistant_message_id:
+            pair.append(
+                {"role": "assistant", "content": previous_run.assistant_message.content}
+            )
+        turns.append(pair)
+    while len(turns) > 1 and sum(
+        len(message["content"]) for pair in turns for message in pair
+    ) > 12000:
+        turns.pop(0)
+    return [message for pair in turns for message in pair]
+
+
+def _record_failure(run_id, error):
+    with transaction.atomic():
+        run = AssistantRun.objects.select_for_update().get(pk=run_id)
+        if run.status != AssistantRun.Status.RUNNING:
+            return
+        run.error_code = error.code
+        run.started_at = None
+        if not error.retryable or run.attempts >= MAX_ATTEMPTS:
+            run.status = AssistantRun.Status.FAILED
+            run.next_attempt_at = None
+        else:
+            run.status = AssistantRun.Status.PENDING
+            run.next_attempt_at = timezone.now() + timedelta(seconds=10 * (3 ** (run.attempts - 1)))
+        run.save(update_fields=["status", "error_code", "started_at", "next_attempt_at", "updated_at"])
+
+
+@shared_task(name="conversations.tasks.generate_assistant_reply")
+def generate_assistant_reply(tenant_id, run_id):
+    if not settings.LLM_CHAT_URL:
+        return
+    with schema_context(get_public_schema_name()):
+        tenant = Customer.objects.filter(pk=tenant_id).first()
+    if tenant is None or tenant.schema_name == get_public_schema_name():
+        return
+    with tenant_context(tenant):
+        with transaction.atomic():
+            run = AssistantRun.objects.select_for_update().select_related("user_message").filter(pk=run_id).first()
+            if run is None or run.status != AssistantRun.Status.PENDING:
+                return
+            if run.next_attempt_at and run.next_attempt_at > timezone.now():
+                return
+            session = WidgetSession.objects.filter(
+                conversation_id=run.user_message.conversation_id,
+                expires_at__gt=timezone.now(),
+            ).first()
+            if session is None or not WidgetSite.objects.filter(
+                pk=session.widget_site_id, tenant=tenant, is_active=True
+            ).exists():
+                run.status = AssistantRun.Status.FAILED
+                run.error_code = "session_inactive"
+                run.save(update_fields=["status", "error_code", "updated_at"])
+                return
+            earlier_open = AssistantRun.objects.filter(
+                user_message__conversation_id=run.user_message.conversation_id,
+                user_message_id__lt=run.user_message_id,
+                status__in=[AssistantRun.Status.PENDING, AssistantRun.Status.RUNNING],
+            ).exists()
+            if earlier_open:
+                return
+            run.status = AssistantRun.Status.RUNNING
+            run.started_at = timezone.now()
+            run.attempts += 1
+            run.save(update_fields=["status", "started_at", "attempts", "updated_at"])
+
+        try:
+            reply = generate_reply(_history_for_run(run))
+        except LLMError as error:
+            _record_failure(run_id, error)
+            return
+        except Exception:
+            logger.exception("Unexpected assistant generation error", extra={"tenant_id": tenant_id, "run_id": run_id})
+            _record_failure(run_id, LLMError("internal_error", retryable=True))
+            return
+
+        with transaction.atomic():
+            run = AssistantRun.objects.select_for_update().get(pk=run_id)
+            if run.status != AssistantRun.Status.RUNNING or run.assistant_message_id:
+                return
+            answer = Message.objects.create(
+                conversation_id=run.user_message.conversation_id,
+                role=Message.Role.ASSISTANT,
+                content=reply,
+            )
+            run.assistant_message = answer
+            run.status = AssistantRun.Status.COMPLETED
+            run.started_at = None
+            run.error_code = ""
+            run.save(update_fields=["assistant_message", "status", "started_at", "error_code", "updated_at"])
+
+
+@shared_task(name="conversations.tasks.dispatch_pending_assistant_runs")
+def dispatch_pending_assistant_runs():
+    if not settings.LLM_CHAT_URL:
+        return 0
+    with schema_context(get_public_schema_name()):
+        tenants = list(Customer.objects.exclude(schema_name=get_public_schema_name()))
+    now = timezone.now()
+    stale_before = now - timedelta(seconds=max(120, settings.LLM_TIMEOUT_SECONDS * 2))
+    dispatched = 0
+    for tenant in tenants:
+        with tenant_context(tenant):
+            with transaction.atomic():
+                stale = AssistantRun.objects.select_for_update().filter(
+                    status=AssistantRun.Status.RUNNING, started_at__lt=stale_before
+                )
+                for run in stale[:100]:
+                    run.status = (
+                        AssistantRun.Status.FAILED
+                        if run.attempts >= MAX_ATTEMPTS
+                        else AssistantRun.Status.PENDING
+                    )
+                    run.error_code = "worker_timeout"
+                    run.started_at = None
+                    run.next_attempt_at = None
+                    run.save(update_fields=["status", "error_code", "started_at", "next_attempt_at", "updated_at"])
+            due_ids = list(
+                AssistantRun.objects.filter(status=AssistantRun.Status.PENDING)
+                .filter(Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now))
+                .order_by("user_message_id")
+                .values_list("pk", flat=True)[:100]
+            )
+            for run_id in due_ids:
+                if dispatch_assistant_run(tenant.pk, run_id):
+                    dispatched += 1
+    return dispatched
