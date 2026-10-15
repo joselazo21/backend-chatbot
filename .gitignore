@@ -1,0 +1,28 @@
+# Python y uv
+__pycache__/
+*.py[cod]
+.venv/
+.python-version
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Configuración y datos locales
+.env
+.env.*
+!.env.example
+*.sqlite3
+media/
+staticfiles/
+celerybeat-schedule*
+
+# Editores y sistema operativo
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
