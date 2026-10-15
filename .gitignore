@@ -20,6 +20,7 @@ htmlcov/
 media/
 staticfiles/
 celerybeat-schedule*
+.pg-test/
 
 # Editores y sistema operativo
 .idea/

@@ -2,7 +2,7 @@
 
 Backend para un chatbot multiempresa que podrá atender un widget web y canales de mensajería. El diseño separa el núcleo de conversación de los adaptadores de canales y modelos, usa RAG para consultar documentos y limita las acciones a herramientas MCP autorizadas.
 
-> **Estado:** base Django ASGI con ruta de salud y entorno local con PostgreSQL, Redis y Celery. Aún no hay clientes, conversaciones ni integraciones de canales.
+> **Estado:** base Django ASGI con clientes y conversaciones separados por esquema, ruta de salud y entorno local con PostgreSQL, Redis y Celery. Aún no hay API de conversación ni integraciones de canales.
 
 ## Documentación
 
@@ -30,18 +30,23 @@ Necesitas Docker Compose. Desde la raíz del repositorio, en PowerShell:
 Copy-Item .env.example .env
 # Cambia POSTGRES_PASSWORD y DJANGO_SECRET_KEY en .env.
 docker compose build
+docker compose up -d db redis
+docker compose run --rm web python manage.py migrate_schemas --shared --noinput
+docker compose run --rm web python manage.py bootstrap_public_tenant --domain localhost
 docker compose up -d
 Invoke-RestMethod http://localhost:8000/health/
 docker compose run --rm web python manage.py test
 ```
 
-La ruta `/health/` comprueba que Django responde; no comprueba la disponibilidad de PostgreSQL ni Redis. El script SQL habilita pgvector al crear por primera vez el volumen de PostgreSQL. El volumen de código y `--reload` son para desarrollo local. Celery tiene un worker para la cola `messages` y una instancia de Beat. Por ahora no hay tareas ni horarios configurados, así que ambos quedan a la espera.
+La ruta `/health/` comprueba que Django responde para un dominio registrado; no comprueba la disponibilidad de Redis. El comando `bootstrap_public_tenant` puede repetirse sin duplicar el cliente o el dominio. Para aplicar migraciones posteriores a todos los clientes, ejecuta `docker compose run --rm web python manage.py migrate_schemas --noinput` antes de actualizar los procesos. El script SQL habilita pgvector al crear por primera vez el volumen de PostgreSQL. El volumen de código y `--reload` son para desarrollo local. Celery tiene un worker para la cola `messages` y una instancia de Beat. Por ahora no hay tareas ni horarios configurados, así que ambos quedan a la espera.
+
+`django-tenants` resuelve el cliente a partir del dominio de la petición. Los modelos `Customer` y `Domain` viven en `public`; `Conversation` vive en cada esquema de cliente. Un dominio desconocido devuelve 404. Esta separación lógica aún no es una barrera de permisos entre clientes: el rol de base de datos de la aplicación puede acceder a todos los esquemas.
 
 Para cambiar dependencias, entra en `backend/`, usa `uv add` o `uv remove`, guarda `pyproject.toml` y `uv.lock`, y reconstruye la imagen.
 
 ## Próximo hito
 
-Añadir el modelo de clientes y dominios con `django-tenants`, las migraciones por esquema y las pruebas de aislamiento. Después, implementar las primeras tareas de ingesta en una cola y un worker separados. La lógica de conversación, RAG y los canales se incorporarán sobre esa base.
+Implementar un alta de clientes controlada y la primera API de conversaciones, con autorización vinculada al cliente. Después, incorporar las primeras tareas de ingesta en una cola y un worker separados. RAG y los canales se incorporarán sobre esa base.
 
 ## Seguridad y contribuciones
 
