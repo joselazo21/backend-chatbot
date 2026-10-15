@@ -1,6 +1,8 @@
 import os
 from django.core.exceptions import ImproperlyConfigured
 
+from customers.validation import normalize_origin
+
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
     raise ImproperlyConfigured("DJANGO_SECRET_KEY is required")
@@ -51,6 +53,28 @@ CELERY_TASK_DEFAULT_QUEUE = "messages"
 CELERY_TASK_IGNORE_RESULT = True
 CELERY_TASK_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["json"]
+
+WIDGET_SESSION_TTL_SECONDS = int(os.environ.get("WIDGET_SESSION_TTL_SECONDS", "1800"))
+WIDGET_SESSION_SITE_LIMIT_PER_MINUTE = int(
+    os.environ.get("WIDGET_SESSION_SITE_LIMIT_PER_MINUTE", "60")
+)
+WIDGET_SESSION_IP_LIMIT_PER_MINUTE = int(
+    os.environ.get("WIDGET_SESSION_IP_LIMIT_PER_MINUTE", "10")
+)
+try:
+    WIDGET_FRONTEND_ORIGIN = (
+        normalize_origin(os.environ["WIDGET_FRONTEND_ORIGIN"])
+        if os.environ.get("WIDGET_FRONTEND_ORIGIN")
+        else ""
+    )
+except ValueError as error:
+    raise ImproperlyConfigured("WIDGET_FRONTEND_ORIGIN must be a valid origin") from error
+if min(
+    WIDGET_SESSION_TTL_SECONDS,
+    WIDGET_SESSION_SITE_LIMIT_PER_MINUTE,
+    WIDGET_SESSION_IP_LIMIT_PER_MINUTE,
+) < 1:
+    raise ImproperlyConfigured("Widget session TTL and limits must be positive")
 
 USE_TZ = True
 TIME_ZONE = "UTC"
