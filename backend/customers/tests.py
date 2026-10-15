@@ -1,5 +1,9 @@
+from io import StringIO
+
 from django.conf import settings
+from django.contrib.auth.hashers import check_password, make_password
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import connection
 from django_tenants.test.cases import TenantTestCase
 from django_tenants.test.client import TenantClient
@@ -13,12 +17,17 @@ class TenantIsolationTests(TenantTestCase):
     @classmethod
     def setup_tenant(cls, tenant):
         tenant.name = "Test A"
+        tenant.service_token_hash = make_password("token-for-a")
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         with schema_context(get_public_schema_name()):
-            cls.other_tenant = Customer.objects.create(schema_name="test_b", name="Test B")
+            cls.other_tenant = Customer.objects.create(
+                schema_name="test_b",
+                name="Test B",
+                service_token_hash=make_password("token-for-b"),
+            )
             cls.other_domain = Domain.objects.create(
                 tenant=cls.other_tenant,
                 domain="tenant-b.test.com",
@@ -63,3 +72,64 @@ class TenantIsolationTests(TenantTestCase):
             with connection.cursor() as cursor:
                 cursor.execute("SELECT to_regclass('public.conversations_conversation')")
                 self.assertIsNone(cursor.fetchone()[0])
+
+    def test_service_api_is_bound_to_customer_and_domain(self):
+        client_a = TenantClient(self.tenant)
+        client_b = TenantClient(self.other_tenant)
+        auth_a = {"HTTP_AUTHORIZATION": "Bearer token-for-a"}
+        auth_b = {"HTTP_AUTHORIZATION": "Bearer token-for-b"}
+
+        self.assertEqual(client_a.post("/api/v1/conversations/").status_code, 401)
+        created = client_a.post(
+            "/api/v1/conversations/", data="{}", content_type="application/json", **auth_a
+        )
+        self.assertEqual(created.status_code, 201)
+        detail_url = created["Location"]
+        self.assertEqual(client_a.get(detail_url, **auth_a).json()["id"], created.json()["id"])
+        self.assertEqual(client_b.get(detail_url, **auth_a).status_code, 401)
+        self.assertEqual(client_b.get(detail_url, **auth_b).status_code, 404)
+        self.assertEqual(client_a.get(detail_url, **auth_b).status_code, 401)
+
+    def test_customer_creation_is_idempotent_and_token_rotates(self):
+        output = StringIO()
+        with schema_context(get_public_schema_name()):
+            try:
+                call_command(
+                    "create_customer",
+                    schema="test_c",
+                    name="Test C",
+                    domain="tenant-c.test.com",
+                    stdout=output,
+                )
+                customer = Customer.objects.get(schema_name="test_c")
+                domain = Domain.objects.get(domain="tenant-c.test.com")
+                self.assertEqual(domain.tenant_id, customer.pk)
+                original_token = output.getvalue().split("Service token (shown once): ")[1].strip()
+                self.assertTrue(check_password(original_token, customer.service_token_hash))
+
+                call_command(
+                    "create_customer",
+                    schema="test_c",
+                    name="Test C",
+                    domain="tenant-c.test.com",
+                    stdout=StringIO(),
+                )
+                with self.assertRaises(CommandError):
+                    call_command(
+                        "create_customer",
+                        schema="test_c",
+                        name="Test C",
+                        domain="wrong.test.com",
+                    )
+
+                rotated_output = StringIO()
+                call_command("rotate_customer_token", schema="test_c", stdout=rotated_output)
+                customer.refresh_from_db()
+                new_token = rotated_output.getvalue().split("Service token (shown once): ")[1].strip()
+                self.assertFalse(check_password(original_token, customer.service_token_hash))
+                self.assertTrue(check_password(new_token, customer.service_token_hash))
+            finally:
+                Domain.objects.filter(domain="tenant-c.test.com").delete()
+                created_customer = Customer.objects.filter(schema_name="test_c").first()
+                if created_customer:
+                    created_customer.delete(force_drop=True)

@@ -6,7 +6,11 @@ if not SECRET_KEY:
     raise ImproperlyConfigured("DJANGO_SECRET_KEY is required")
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost").split(",")
+    if host.strip()
+]
 
 SHARED_APPS = [
     "django_tenants",
