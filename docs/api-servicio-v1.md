@@ -28,6 +28,10 @@ Usa el dominio registrado para el cliente y envía `Authorization: Bearer <crede
 |---|---|
 | `POST /api/v1/conversations/` | Crea una conversación vacía. Acepta cuerpo vacío o `{}` JSON. Devuelve `201`, `id`, `created_at` y cabecera `Location`. |
 | `GET /api/v1/conversations/{id}/` | Devuelve `id` y `created_at` para una conversación del cliente. |
+| `POST /api/v1/documents/` | Carga un PDF o texto/Markdown y devuelve `202` con estado `queued`. |
+| `GET /api/v1/documents/` | Lista los 100 documentos más recientes. |
+| `GET /api/v1/documents/{id}/` | Consulta estado, error y número de fragmentos. |
+| `DELETE /api/v1/documents/{id}/` | Elimina archivo y fragmentos. |
 
 Ejemplo local, sustituyendo la credencial recibida por el comando de alta:
 
@@ -37,3 +41,5 @@ curl.exe --noproxy '*' --resolve acme.localhost:8000:127.0.0.1 -H "Authorization
 ```
 
 La opción `--resolve` dirige el subdominio al servidor local sin cambiar el archivo `hosts`. La configuración de desarrollo permite `.localhost`; para otros dominios, actualiza `DJANGO_ALLOWED_HOSTS` y DNS. Antes de poner esta API en internet faltan TLS, límites de petición y tráfico, observabilidad y una política de credenciales de servicio. La sesión pública del widget usará otra credencial y otro flujo.
+
+Los documentos usan la misma credencial privada y se procesan en Celery. Consulta [RAG y streaming](rag-y-streaming.md) para configurar embeddings, límites de archivo y estados.

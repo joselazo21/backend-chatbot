@@ -310,8 +310,10 @@ def widget_message_generation(request, message_id):
     ).select_related("assistant_run").first()
     if message is None:
         raise Http404
+    status = _serialize_message(message)["generation_status"]
+    sources = message.assistant_run.retrieved_sources if status == AssistantRun.Status.COMPLETED else []
     return _cors(
-        JsonResponse({"message_id": message.pk, "status": _serialize_message(message)["generation_status"]}),
+        JsonResponse({"message_id": message.pk, "status": status, "sources": sources}),
         origin,
         "GET",
         "Authorization",

@@ -427,8 +427,17 @@ class WidgetSessionTests(TenantTestCase):
             with patch("conversations.tasks.generate_reply", return_value="Hola, ¿qué necesitas?") as llm:
                 generate_assistant_reply(self.tenant.pk, first_run.pk)
                 generate_assistant_reply(self.tenant.pk, first_run.pk)
-            llm.assert_called_once_with([{"role": "user", "content": "Hola"}])
+            self.assertEqual(llm.call_args.args[0], [{"role": "user", "content": "Hola"}])
+            self.assertTrue(callable(llm.call_args.kwargs["on_delta"]))
             self.assertEqual(self.client.get(generation_url, **auth).json()["status"], "completed")
+            events_url = f"/widget/v1/messages/{first.json()['id']}/events/"
+            self.assertEqual(self.client.options(events_url, **self.origin).status_code, 204)
+            self.assertEqual(self.client.get(events_url, **self.origin).status_code, 401)
+            stream_response = self.client.get(events_url, **auth)
+            self.assertEqual(stream_response.status_code, 200)
+            self.assertTrue(stream_response["Content-Type"].startswith("text/event-stream"))
+            self.assertEqual(stream_response["X-Accel-Buffering"], "no")
+            stream_response.close()
 
             with self.captureOnCommitCallbacks(execute=True):
                 second = self.client.post(
@@ -439,11 +448,12 @@ class WidgetSessionTests(TenantTestCase):
                 second_run = AssistantRun.objects.get(user_message_id=second.json()["id"])
             with patch("conversations.tasks.generate_reply", return_value="De 9 a 5") as llm:
                 generate_assistant_reply(self.tenant.pk, second_run.pk)
-            llm.assert_called_once_with([
+            self.assertEqual(llm.call_args.args[0], [
                 {"role": "user", "content": "Hola"},
                 {"role": "assistant", "content": "Hola, ¿qué necesitas?"},
                 {"role": "user", "content": "Horario"},
             ])
+            self.assertTrue(callable(llm.call_args.kwargs["on_delta"]))
 
         listing = self.client.get("/widget/v1/messages/", **auth).json()["messages"]
         self.assertEqual([message["role"] for message in listing], ["user", "assistant", "user", "assistant"])

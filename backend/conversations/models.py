@@ -57,6 +57,8 @@ class AssistantRun(models.Model):
     next_attempt_at = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     error_code = models.CharField(max_length=40, blank=True)
+    streamed_content = models.TextField(blank=True)
+    retrieved_sources = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
