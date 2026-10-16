@@ -492,6 +492,38 @@ class WidgetSessionTests(TenantTestCase):
                 run.refresh_from_db()
                 self.assertEqual(run.status, AssistantRun.Status.COMPLETED)
                 self.assertEqual(run.assistant_message.content, "Respuesta")
+                self.assertEqual(run.streamed_content, "")
+
+    def test_worker_includes_tenant_document_context_and_records_sources(self):
+        token = self.create_session().json()["access_token"]
+        source = {"document_id": "example-id", "filename": "manual.md", "page": None, "chunk": 0}
+        with patch.object(settings, "LLM_CHAT_URL", "https://llm.example.com/v1/chat/completions"), patch(
+            "conversations.widget_views.dispatch_assistant_run"
+        ):
+            created = self.client.post(
+                "/widget/v1/messages/",
+                data=json.dumps({"content": "¿Cuál es el horario?"}),
+                content_type="application/json",
+                HTTP_AUTHORIZATION=f"Bearer {token}",
+                **self.origin,
+            )
+            with tenant_context(self.tenant):
+                run = AssistantRun.objects.get(user_message_id=created.json()["id"])
+            with patch("conversations.tasks.retrieve_context", return_value=(["[1] manual.md: Lunes a viernes"], [source])), patch(
+                "conversations.tasks.generate_reply", return_value="Lunes a viernes [1]"
+            ) as llm:
+                generate_assistant_reply(self.tenant.pk, run.pk)
+            self.assertEqual(llm.call_args.args[0][0]["role"], "system")
+            self.assertIn("Lunes a viernes", llm.call_args.args[0][0]["content"])
+            with tenant_context(self.tenant):
+                run.refresh_from_db()
+                self.assertEqual(run.retrieved_sources, [source])
+            generation = self.client.get(
+                f"/widget/v1/messages/{created.json()['id']}/generation/",
+                HTTP_AUTHORIZATION=f"Bearer {token}",
+                **self.origin,
+            )
+            self.assertEqual(generation.json()["sources"], [source])
 
     def test_worker_does_not_call_model_after_session_revocation(self):
         token = self.create_session().json()["access_token"]

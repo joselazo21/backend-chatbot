@@ -71,10 +71,11 @@ def _record_failure(run_id, error):
         if not error.retryable or run.attempts >= MAX_ATTEMPTS:
             run.status = AssistantRun.Status.FAILED
             run.next_attempt_at = None
+            run.streamed_content = ""
         else:
             run.status = AssistantRun.Status.PENDING
             run.next_attempt_at = timezone.now() + timedelta(seconds=10 * (3 ** (run.attempts - 1)))
-        run.save(update_fields=["status", "error_code", "started_at", "next_attempt_at", "updated_at"])
+        run.save(update_fields=["status", "error_code", "started_at", "next_attempt_at", "streamed_content", "updated_at"])
 
 
 @shared_task(name="conversations.tasks.generate_assistant_reply")
@@ -170,7 +171,7 @@ def generate_assistant_reply(tenant_id, run_id):
             )
             run.assistant_message = answer
             run.status = AssistantRun.Status.COMPLETED
-            run.streamed_content = reply
+            run.streamed_content = ""
             run.started_at = None
             run.error_code = ""
             run.save(update_fields=["assistant_message", "status", "streamed_content", "started_at", "error_code", "updated_at"])

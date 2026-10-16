@@ -32,6 +32,10 @@ def _snapshot(tenant, session_id, run_id, origin):
         run = AssistantRun.objects.filter(
             pk=run_id, user_message__conversation_id=session.conversation_id
         ).values("status", "attempts", "streamed_content", "assistant_message_id", "error_code", "retrieved_sources").first()
+        if run and run["status"] == AssistantRun.Status.COMPLETED and run["assistant_message_id"]:
+            run["streamed_content"] = Message.objects.filter(
+                pk=run["assistant_message_id"]
+            ).values_list("content", flat=True).first() or ""
         return run
 
 

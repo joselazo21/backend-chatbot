@@ -45,3 +45,10 @@ class ProcessingTests(SimpleTestCase):
         ), patch("knowledge.embeddings.urlopen", return_value=io.BytesIO(json.dumps(response).encode())):
             with self.assertRaises(EmbeddingError):
                 embed_texts(["uno"])
+
+    def test_accepts_dimensions_above_ann_index_limit_for_exact_search(self):
+        response = {"data": [{"index": 0, "embedding": [1.0] * 3072}]}
+        with patch.object(settings, "EMBEDDING_URL", "https://embed.example.com/v1/embeddings"), patch.object(
+            settings, "EMBEDDING_MODEL", "model"
+        ), patch("knowledge.embeddings.urlopen", return_value=io.BytesIO(json.dumps(response).encode())):
+            self.assertEqual(len(embed_texts(["uno"])[0]), 3072)

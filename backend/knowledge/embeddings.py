@@ -55,7 +55,7 @@ def embed_texts(texts):
             raise ValueError
         vectors = [item["embedding"] for item in ordered]
         dimensions = len(vectors[0])
-        if not 1 <= dimensions <= 2000:
+        if not 1 <= dimensions <= 16000:
             raise ValueError
         for vector in vectors:
             if (
