@@ -14,6 +14,10 @@ ALLOWED_HOSTS = [
     for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost").split(",")
     if host.strip()
 ]
+if os.environ.get("RAILWAY_ENVIRONMENT"):
+    ALLOWED_HOSTS.append("healthcheck.railway.app")
+    if os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+        ALLOWED_HOSTS.append(os.environ["RAILWAY_PUBLIC_DOMAIN"])
 
 SHARED_APPS = [
     "django_tenants",

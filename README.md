@@ -12,6 +12,7 @@ Backend para un chatbot multiempresa que podrá atender un widget web y canales 
 - [Widget público](docs/widget-bootstrap-api.md): registro de sitios, descubrimiento, sesiones, mensajes y estados de generación que consumirá el frontend.
 - [RAG y streaming](docs/rag-y-streaming.md): carga de documentos, procesamiento, recuperación y eventos SSE.
 - [Telegram y WhatsApp con Baileys](docs/canales-telegram-baileys.md): alta, credenciales, emparejamiento, API interna y límites operativos.
+- [Despliegue en Railway](docs/despliegue-railway.md): servicios, variables, migraciones y límites del plan gratuito.
 
 ## Stack previsto
 
