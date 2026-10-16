@@ -19,6 +19,7 @@ def retrieve_context(question):
             document__embedding_dimensions=len(vector),
         )
         .select_related("document")
+        .defer("document__source")
         .annotate(distance=CosineDistance("embedding", vector))
         .order_by("distance", "pk")[:4]
     )

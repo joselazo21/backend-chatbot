@@ -17,7 +17,7 @@ EMBEDDING_TIMEOUT_SECONDS=60
 
 Configura también `LLM_CHAT_URL`, `LLM_MODEL` y, si procede, `LLM_API_TOKEN`. Para streaming, el LLM debe aceptar `stream: true` y devolver eventos SSE de chat completions compatibles con OpenAI (`choices[0].delta.content`, seguidos de `data: [DONE]`). El adaptador anterior para la respuesta JSON completa sigue disponible, pero el worker usa streaming.
 
-Tras actualizar el código, ejecuta `docker compose run --rm web python manage.py migrate_schemas --noinput` antes de reiniciar `web`, `worker` y `beat`. La migración compartida habilita `vector` en PostgreSQL; la imagen `pgvector/pgvector:pg17` ya contiene la extensión. En desarrollo, Compose monta `media_data` en `/app/media` tanto para `web` como para `worker`. En producción, todos los procesos que procesen documentos necesitan el mismo almacenamiento privado y persistente; una carpeta local independiente por réplica no sirve. No publiques `/app/media` como archivos estáticos.
+Tras actualizar el código, ejecuta `docker compose run --rm web python manage.py migrate_schemas --noinput` antes de reiniciar `web`, `worker` y `beat`. La migración compartida habilita `vector` en PostgreSQL; la imagen `pgvector/pgvector:pg17` ya contiene la extensión. Web guarda temporalmente el archivo original en PostgreSQL (máximo 5 MB) y Celery lo lee desde allí. Al terminar o agotar los intentos, se borra el original; permanecen los fragmentos de texto y sus vectores. No hace falta un bucket ni un volumen compartido para documentos. Para volver a procesar un documento con otro modelo habrá que subirlo de nuevo. La base de datos y sus copias de seguridad pueden crecer durante las cargas, por lo que conviene vigilar su espacio.
 
 ## Cargar documentos
 
@@ -32,7 +32,7 @@ Content-Type: multipart/form-data
 file=@manual.pdf
 ```
 
-Responde `202` con `id`, `filename`, `size_bytes`, `status: "queued"`, `error_code`, `chunk_count` y `created_at`. `GET /api/v1/documents/` lista los 100 documentos más recientes; `GET /api/v1/documents/{id}/` muestra el estado y el número de fragmentos cuando está listo. `DELETE /api/v1/documents/{id}/` borra el documento, sus fragmentos y el archivo. Las rutas no aceptan tokens públicos `ws_...`.
+Responde `202` con `id`, `filename`, `size_bytes`, `status: "queued"`, `error_code`, `chunk_count` y `created_at`. `GET /api/v1/documents/` lista los 100 documentos más recientes; `GET /api/v1/documents/{id}/` muestra el estado y el número de fragmentos cuando está listo. `DELETE /api/v1/documents/{id}/` borra el documento y sus fragmentos, incluido el archivo temporal si sigue pendiente. Las rutas no aceptan tokens públicos `ws_...`.
 
 Celery extrae el texto, lo divide en fragmentos de hasta 1.200 caracteres con 150 de solapamiento, genera embeddings en lotes de 16 y guarda vectores y texto en el esquema PostgreSQL del cliente. Los documentos pasan por `queued`, `processing`, `ready` o `failed`. Los errores temporales se reintentan hasta tres veces; Beat recupera trabajos sin despachar y procesos interrumpidos. El campo `error_code` indica un fallo sin exponer el documento ni la respuesta del proveedor.
 

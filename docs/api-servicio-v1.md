@@ -31,7 +31,7 @@ Usa el dominio registrado para el cliente y envía `Authorization: Bearer <crede
 | `POST /api/v1/documents/` | Carga un PDF o texto/Markdown y devuelve `202` con estado `queued`. |
 | `GET /api/v1/documents/` | Lista los 100 documentos más recientes. |
 | `GET /api/v1/documents/{id}/` | Consulta estado, error y número de fragmentos. |
-| `DELETE /api/v1/documents/{id}/` | Elimina archivo y fragmentos. |
+| `DELETE /api/v1/documents/{id}/` | Elimina el documento, sus fragmentos y el archivo temporal si aún existe. |
 
 Ejemplo local, sustituyendo la credencial recibida por el comando de alta:
 

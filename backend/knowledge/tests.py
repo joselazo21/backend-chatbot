@@ -1,4 +1,3 @@
-import tempfile
 from unittest.mock import patch
 
 from django.conf import settings
@@ -24,7 +23,7 @@ class KnowledgeTests(TenantTestCase):
     def test_upload_process_retrieve_and_delete_are_tenant_scoped(self):
         client = TenantClient(self.tenant)
         auth = {"HTTP_AUTHORIZATION": "Bearer service-secret"}
-        with tempfile.TemporaryDirectory() as media_root, self.settings(MEDIA_ROOT=media_root), patch.object(
+        with patch.object(
             settings, "EMBEDDING_URL", "https://embed.example.com/v1/embeddings"
         ), patch.object(settings, "EMBEDDING_MODEL", "test-model"), patch(
             "knowledge.views.dispatch_document"
@@ -38,6 +37,8 @@ class KnowledgeTests(TenantTestCase):
             document_id = response.json()["id"]
             self.assertEqual(response.json()["status"], "queued")
             self.assertEqual(client.get("/api/v1/documents/").status_code, 401)
+            with tenant_context(self.tenant):
+                self.assertEqual(bytes(Document.objects.get(pk=document_id).source), b"Horario: lunes a viernes de 9 a 5.")
 
             with patch("knowledge.tasks.embed_texts", return_value=[[1.0, 0.0]]):
                 process_document(self.tenant.pk, document_id)
@@ -45,6 +46,7 @@ class KnowledgeTests(TenantTestCase):
             with tenant_context(self.tenant):
                 document = Document.objects.get(pk=document_id)
                 self.assertEqual(document.status, Document.Status.READY)
+                self.assertIsNone(document.source)
                 self.assertEqual(document.embedding_dimensions, 2)
                 self.assertEqual(Chunk.objects.filter(document=document).count(), 1)
                 with patch("knowledge.retrieval.embed_texts", return_value=[[1.0, 0.0]]):

@@ -6,6 +6,7 @@ from pgvector.django import VectorField
 
 
 def document_path(instance, filename):
+    """Retained for the initial migration; new uploads live in PostgreSQL."""
     suffix = Path(filename).suffix.lower()
     return f"knowledge/{connection.schema_name}/{instance.pk}{suffix}"
 
@@ -19,7 +20,7 @@ class Document(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     filename = models.CharField(max_length=255)
-    file = models.FileField(upload_to=document_path)
+    source = models.BinaryField(null=True, blank=True)
     size_bytes = models.PositiveIntegerField()
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
     attempts = models.PositiveSmallIntegerField(default=0)

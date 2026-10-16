@@ -31,7 +31,7 @@ def _serialize(document):
 @require_http_methods(["GET", "POST"])
 def documents(request):
     if request.method == "GET":
-        items = Document.objects.order_by("-created_at")[:100]
+        items = Document.objects.defer("source").order_by("-created_at")[:100]
         return JsonResponse({"documents": [_serialize(item) for item in items]})
     if not settings.EMBEDDING_URL:
         return JsonResponse({"error": "embeddings_unconfigured"}, status=503)
@@ -51,7 +51,7 @@ def documents(request):
         return JsonResponse({"error": "invalid_document"}, status=400)
     with transaction.atomic():
         document = Document.objects.create(
-            filename=filename, file=upload, size_bytes=upload.size
+            filename=filename, source=upload.read(), size_bytes=upload.size
         )
         tenant_id = request.tenant.pk
         transaction.on_commit(lambda: dispatch_document(tenant_id, document.pk))
@@ -64,14 +64,11 @@ def documents(request):
 @require_service_token
 @require_http_methods(["GET", "DELETE"])
 def document_detail(request, document_id):
-    document = Document.objects.filter(pk=document_id).first()
+    document = Document.objects.defer("source").filter(pk=document_id).first()
     if document is None:
         raise Http404
     if request.method == "GET":
         return JsonResponse(_serialize(document))
     with transaction.atomic():
-        storage = document.file.storage
-        path = document.file.name
         document.delete()
-        transaction.on_commit(lambda: storage.delete(path))
     return HttpResponse(status=204)
