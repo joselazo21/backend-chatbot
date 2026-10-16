@@ -11,6 +11,7 @@ x-backend: &backend
     CELERY_BROKER_URL: redis://redis:6379/0
   volumes:
     - ./backend:/app
+    - media_data:/app/media
   depends_on:
     db:
       condition: service_healthy
@@ -65,3 +66,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  media_data:

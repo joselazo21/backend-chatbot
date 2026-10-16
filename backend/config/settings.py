@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 
 from customers.validation import normalize_origin
@@ -21,6 +22,7 @@ SHARED_APPS = [
 ]
 TENANT_APPS = [
     "conversations",
+    "knowledge",
 ]
 INSTALLED_APPS = SHARED_APPS + [app for app in TENANT_APPS if app not in SHARED_APPS]
 MIDDLEWARE = ["django_tenants.middleware.main.TenantMainMiddleware"]
@@ -59,6 +61,10 @@ CELERY_BEAT_SCHEDULE = {
     "dispatch-pending-assistant-runs": {
         "task": "conversations.tasks.dispatch_pending_assistant_runs",
         "schedule": 30.0,
+    },
+    "dispatch-pending-documents": {
+        "task": "knowledge.tasks.dispatch_pending_documents",
+        "schedule": 30.0,
     }
 }
 
@@ -66,10 +72,19 @@ LLM_CHAT_URL = os.environ.get("LLM_CHAT_URL", "").strip()
 LLM_MODEL = os.environ.get("LLM_MODEL", "").strip()
 LLM_API_TOKEN = os.environ.get("LLM_API_TOKEN", "")
 LLM_TIMEOUT_SECONDS = int(os.environ.get("LLM_TIMEOUT_SECONDS", "60"))
+EMBEDDING_URL = os.environ.get("EMBEDDING_URL", "").strip()
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "").strip()
+EMBEDDING_API_TOKEN = os.environ.get("EMBEDDING_API_TOKEN", "")
+EMBEDDING_TIMEOUT_SECONDS = int(os.environ.get("EMBEDDING_TIMEOUT_SECONDS", "60"))
+MEDIA_ROOT = os.environ.get("DJANGO_MEDIA_ROOT", str(Path(__file__).resolve().parent.parent / "media"))
 if LLM_CHAT_URL and not LLM_MODEL:
     raise ImproperlyConfigured("LLM_MODEL is required when LLM_CHAT_URL is set")
 if LLM_TIMEOUT_SECONDS < 1:
     raise ImproperlyConfigured("LLM_TIMEOUT_SECONDS must be positive")
+if EMBEDDING_URL and not EMBEDDING_MODEL:
+    raise ImproperlyConfigured("EMBEDDING_MODEL is required when EMBEDDING_URL is set")
+if EMBEDDING_TIMEOUT_SECONDS < 1:
+    raise ImproperlyConfigured("EMBEDDING_TIMEOUT_SECONDS must be positive")
 
 WIDGET_SESSION_TTL_SECONDS = int(os.environ.get("WIDGET_SESSION_TTL_SECONDS", "1800"))
 WIDGET_SESSION_SITE_LIMIT_PER_MINUTE = int(
