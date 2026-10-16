@@ -1,6 +1,7 @@
 from django.urls import path
 
 from conversations.views import conversation_detail, create_conversation
+from conversations.channel_views import baileys_ack, baileys_inbound, baileys_outbound, telegram_webhook
 from conversations.stream import widget_message_events
 from conversations.widget_views import (
     create_widget_session,
@@ -14,6 +15,10 @@ from knowledge.views import document_detail, documents
 from .views import health
 
 urlpatterns = [
+    path("channels/telegram/<uuid:account_id>/webhook/", telegram_webhook, name="telegram_webhook"),
+    path("channels/baileys/<uuid:account_id>/inbound/", baileys_inbound, name="baileys_inbound"),
+    path("channels/baileys/<uuid:account_id>/outbound/", baileys_outbound, name="baileys_outbound"),
+    path("channels/baileys/<uuid:account_id>/outbound/<int:delivery_id>/ack/", baileys_ack, name="baileys_ack"),
     path("health/", health, name="health"),
     path("widget/v1/bootstrap", widget_bootstrap, name="widget_bootstrap"),
     path("widget/v1/sessions/", create_widget_session, name="widget_session_create"),
