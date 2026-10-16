@@ -21,6 +21,8 @@ media/
 staticfiles/
 celerybeat-schedule*
 .pg-test/
+node_modules/
+baileys-bridge/auth/
 
 # Editores y sistema operativo
 .idea/

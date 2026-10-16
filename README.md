@@ -2,7 +2,7 @@
 
 Backend para un chatbot multiempresa que podrá atender un widget web y canales de mensajería. El diseño separa el núcleo de conversación de los adaptadores de canales y modelos, usa RAG para consultar documentos y limita las acciones a herramientas MCP autorizadas.
 
-> **Estado:** base Django ASGI con clientes, widget, generación con Celery, documentos RAG en pgvector y streaming SSE. Las URL reales del LLM y del servicio de embeddings aún no están configuradas. El frontend está en otro repositorio; faltan herramientas MCP e integraciones de canales.
+> **Estado:** base Django ASGI con clientes, widget, generación con Celery, documentos RAG en pgvector, streaming SSE y adaptadores de texto para Telegram y WhatsApp mediante Baileys. Las URL reales del LLM y del servicio de embeddings aún no están configuradas. El frontend está en otro repositorio; faltan herramientas MCP.
 
 ## Documentación
 
@@ -11,6 +11,7 @@ Backend para un chatbot multiempresa que podrá atender un widget web y canales 
 - [API de servicio v1](docs/api-servicio-v1.md): alta de clientes, credenciales y rutas disponibles.
 - [Widget público](docs/widget-bootstrap-api.md): registro de sitios, descubrimiento, sesiones, mensajes y estados de generación que consumirá el frontend.
 - [RAG y streaming](docs/rag-y-streaming.md): carga de documentos, procesamiento, recuperación y eventos SSE.
+- [Telegram y WhatsApp con Baileys](docs/canales-telegram-baileys.md): alta, credenciales, emparejamiento, API interna y límites operativos.
 
 ## Stack previsto
 
@@ -22,6 +23,7 @@ Backend para un chatbot multiempresa que podrá atender un widget web y canales 
 | Aislamiento de clientes | Esquemas PostgreSQL con `django-tenants`, sujetos a pruebas de permisos y acceso cruzado |
 | Dependencias Python | `pyproject.toml`, `uv` y `uv.lock` |
 | Herramientas externas | Servidores MCP propios, autorizados por cliente y usuario |
+| Canales | Webhook Telegram en Django y puente Node con Baileys para WhatsApp |
 
 Las elecciones marcadas como pendientes en la arquitectura siguen abiertas. En particular, el proveedor de nube, los modelos, la residencia de datos y el nivel de aislamiento contratado deben definirse antes de admitir datos de clientes.
 
@@ -57,7 +59,7 @@ Para cambiar dependencias, entra en `backend/`, usa `uv add` o `uv remove`, guar
 
 ## Próximo hito
 
-Configurar y probar los endpoints reales de chat y embeddings, y validar el contrato SSE desde el repositorio del widget. Después, incorporar herramientas y canales sobre esa base.
+Configurar y probar los endpoints reales de chat y embeddings, validar el contrato SSE desde el repositorio del widget y probar ambos canales con cuentas reales. Después, incorporar herramientas MCP.
 
 ## Seguridad y contribuciones
 

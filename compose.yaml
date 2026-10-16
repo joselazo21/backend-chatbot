@@ -7,6 +7,7 @@ x-backend: &backend
   env_file: .env
   environment:
     POSTGRES_HOST: db
+    DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,.localhost},web
     REDIS_CACHE_URL: redis://redis:6379/2
     CELERY_BROKER_URL: redis://redis:6379/0
   volumes:
@@ -63,7 +64,23 @@ services:
     <<: *backend
     command: celery -A config beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
 
+  baileys:
+    build:
+      context: ./baileys-bridge
+    image: backend-chatbot-baileys:dev
+    profiles: ["baileys"]
+    env_file: .env
+    environment:
+      DJANGO_INTERNAL_URL: http://web:8000
+      DJANGO_PUBLIC_HOST: ${DJANGO_PUBLIC_HOST:-localhost}
+      BAILEYS_AUTH_DIR: /data/auth
+    volumes:
+      - baileys_auth:/data/auth
+    depends_on:
+      - web
+
 volumes:
   postgres_data:
   redis_data:
   media_data:
+  baileys_auth:
