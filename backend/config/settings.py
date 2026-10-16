@@ -65,7 +65,11 @@ CELERY_BEAT_SCHEDULE = {
     "dispatch-pending-documents": {
         "task": "knowledge.tasks.dispatch_pending_documents",
         "schedule": 30.0,
-    }
+    },
+    "dispatch-pending-channel-replies": {
+        "task": "conversations.channel_tasks.dispatch_pending_channel_replies",
+        "schedule": 15.0,
+    },
 }
 
 LLM_CHAT_URL = os.environ.get("LLM_CHAT_URL", "").strip()

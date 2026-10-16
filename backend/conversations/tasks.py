@@ -11,15 +11,18 @@ from django.db.models import Q
 from django.utils import timezone
 from django_tenants.utils import get_public_schema_name, schema_context, tenant_context
 
-from customers.models import Customer, WidgetSite
+from customers.models import ChannelAccount, Customer, WidgetSite
 from knowledge.embeddings import EmbeddingError
 from knowledge.retrieval import retrieve_context
 
 from .llm import LLMError, generate_reply
-from .models import AssistantRun, Message, WidgetSession
+from .models import AssistantRun, ChannelConversation, Message, WidgetSession
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
+
+# Celery's app autodiscovery imports tasks.py; register channel tasks as well.
+from . import channel_tasks  # noqa: E402,F401
 
 
 def dispatch_assistant_run(tenant_id, run_id):
@@ -97,11 +100,22 @@ def generate_assistant_reply(tenant_id, run_id):
                 conversation_id=run.user_message.conversation_id,
                 expires_at__gt=timezone.now(),
             ).first()
-            if session is None or not WidgetSite.objects.filter(
-                pk=session.widget_site_id, tenant=tenant, is_active=True
-            ).exists():
+            channel_binding = ChannelConversation.objects.filter(conversation_id=run.user_message.conversation_id).first()
+            with schema_context(get_public_schema_name()):
+                authorized = (
+                    bool(channel_binding)
+                    and ChannelAccount.objects.filter(
+                        pk=channel_binding.channel_account_id, tenant=tenant, is_active=True
+                    ).exists()
+                ) if channel_binding else (
+                    bool(session)
+                    and WidgetSite.objects.filter(
+                        pk=session.widget_site_id, tenant=tenant, is_active=True
+                    ).exists()
+                )
+            if not authorized:
                 run.status = AssistantRun.Status.FAILED
-                run.error_code = "session_inactive"
+                run.error_code = "channel_inactive" if channel_binding else "session_inactive"
                 run.save(update_fields=["status", "error_code", "updated_at"])
                 return
             earlier_open = AssistantRun.objects.filter(
@@ -175,6 +189,10 @@ def generate_assistant_reply(tenant_id, run_id):
             run.started_at = None
             run.error_code = ""
             run.save(update_fields=["assistant_message", "status", "streamed_content", "started_at", "error_code", "updated_at"])
+            if channel_binding:
+                from .channels import queue_channel_reply
+
+                queue_channel_reply(run)
 
 
 @shared_task(name="conversations.tasks.dispatch_pending_assistant_runs")

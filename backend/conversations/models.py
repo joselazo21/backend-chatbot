@@ -64,3 +64,55 @@ class AssistantRun(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["status", "next_attempt_at"])]
+
+
+class ChannelConversation(models.Model):
+    conversation = models.OneToOneField(
+        Conversation, on_delete=models.CASCADE, related_name="channel_binding"
+    )
+    channel_account_id = models.UUIDField()
+    external_chat_id = models.CharField(max_length=255)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["channel_account_id", "external_chat_id"],
+                name="unique_channel_external_chat",
+            )
+        ]
+
+
+class InboundChannelMessage(models.Model):
+    channel_account_id = models.UUIDField()
+    external_message_id = models.CharField(max_length=255)
+    message = models.OneToOneField(Message, on_delete=models.CASCADE)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["channel_account_id", "external_message_id"],
+                name="unique_channel_inbound_message",
+            )
+        ]
+
+
+class OutboundChannelMessage(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        LEASED = "leased", "Leased"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+
+    assistant_run = models.OneToOneField(AssistantRun, on_delete=models.CASCADE)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    leased_until = models.DateTimeField(null=True, blank=True)
+    lease_token = models.UUIDField(null=True, blank=True)
+    provider_message_id = models.CharField(max_length=255, blank=True)
+    sent_offset = models.PositiveIntegerField(default=0)
+    last_error = models.CharField(max_length=40, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "next_attempt_at"])]

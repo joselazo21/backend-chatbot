@@ -1,4 +1,5 @@
 import secrets
+import uuid
 
 from django.db import models
 from django_tenants.models import DomainMixin, TenantMixin
@@ -36,4 +37,24 @@ class WidgetSite(models.Model):
             models.UniqueConstraint(
                 fields=["tenant", "allowed_origin"], name="unique_widget_site_per_tenant"
             )
+        ]
+
+
+class ChannelAccount(models.Model):
+    class Provider(models.TextChoices):
+        TELEGRAM = "telegram", "Telegram"
+        BAILEYS = "baileys", "WhatsApp (Baileys)"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="channel_accounts")
+    provider = models.CharField(max_length=16, choices=Provider.choices)
+    name = models.CharField(max_length=100)
+    secret_digest = models.CharField(max_length=64)
+    telegram_token_env = models.CharField(max_length=100, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "provider", "name"], name="unique_channel_account_name")
         ]
