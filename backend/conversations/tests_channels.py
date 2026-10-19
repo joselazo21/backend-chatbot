@@ -7,6 +7,7 @@ from uuid import uuid4
 from django.test import RequestFactory, SimpleTestCase
 from django.conf import settings
 from django_tenants.test.cases import TenantTestCase
+from django_tenants.test.client import TenantClient
 from django_tenants.utils import get_public_schema_name, schema_context, tenant_context
 
 from customers.models import ChannelAccount
@@ -78,6 +79,33 @@ class ChannelEndpointTests(SimpleTestCase):
             "conversations.channel_views.acknowledge_baileys_reply", return_value=False
         ):
             self.assertEqual(baileys_ack(request, self.account.pk, 3).status_code, 409)
+
+
+class ChannelHostTests(TenantTestCase):
+    def test_telegram_webhook_is_accepted_on_a_customer_domain(self):
+        with schema_context(get_public_schema_name()):
+            account = ChannelAccount.objects.create(
+                tenant=self.tenant,
+                provider="telegram",
+                name="test",
+                secret_digest=hashlib.sha256(b"secret").hexdigest(),
+                telegram_token_env="TELEGRAM_BOT_TOKEN_TEST",
+            )
+        payload = {"message": {"message_id": 1, "text": "Hola", "chat": {"id": 7, "type": "private"}}}
+        client = TenantClient(self.tenant)
+        path = f"/channels/telegram/{account.pk}/webhook/"
+        with patch("conversations.channel_views.accept_inbound") as accepted:
+            rejected = client.post(
+                path, data=json.dumps(payload), content_type="application/json",
+                HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="wrong",
+            )
+            response = client.post(
+                path, data=json.dumps(payload), content_type="application/json",
+                HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret",
+            )
+        self.assertEqual(rejected.status_code, 401)
+        self.assertEqual(response.status_code, 200)
+        accepted.assert_called_once()
 
 
 class ChannelPersistenceTests(TenantTestCase):
