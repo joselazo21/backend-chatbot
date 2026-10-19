@@ -196,6 +196,8 @@ Las bibliotecas se usan **solo dentro del adaptador correspondiente**, como impl
 | Discord (futuro) | `discord.py` | — | — |
 | Email (futuro) | `django-anymail` (webhooks de correo entrante) | — | Integración nativa con Django. |
 
+> **Implementación actual:** WhatsApp se integró con un puente Node basado en Baileys (interfaz no oficial de WhatsApp Web), no con `pywa` ni la Cloud API. Telegram usa llamadas HTTP directas a la Bot API, sin biblioteca. Consulta [Telegram y WhatsApp con Baileys](canales-telegram-baileys.md). La Cloud API sigue siendo la opción prevista si Baileys no resulta estable para clientes.
+
 ### 5.4 Canales por cliente
 
 Cada cliente conecta **sus propias cuentas** de canales: su propio bot de Telegram (con su token) y su propio número de WhatsApp Business. Ningún canal se comparte entre clientes. Cada canal de cada cliente tiene una URL de webhook única con un secreto propio, que permite resolver el cliente antes de procesar el mensaje.
