@@ -1,6 +1,6 @@
 # API de servicio v1
 
-Esta primera API permite crear y consultar conversaciones desde un servidor autorizado del cliente. Todavía no recibe mensajes ni genera respuestas. La credencial de servicio es privada y da acceso a las conversaciones del cliente: no debe aparecer en JavaScript, HTML ni en el widget público.
+Esta primera API permite crear y consultar conversaciones y gestionar documentos RAG desde un servidor autorizado del cliente. No recibe mensajes de visitantes: los mensajes y las respuestas del asistente llegan por el [widget](widget-bootstrap-api.md) y los [canales](canales-telegram-baileys.md). La credencial de servicio es privada y da acceso a las conversaciones del cliente: no debe aparecer en JavaScript, HTML ni en el widget público.
 
 ## Alta y credenciales
 

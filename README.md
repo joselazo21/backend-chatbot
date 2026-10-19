@@ -2,7 +2,7 @@
 
 Backend para un chatbot multiempresa que podrá atender un widget web y canales de mensajería. El diseño separa el núcleo de conversación de los adaptadores de canales y modelos, usa RAG para consultar documentos y limita las acciones a herramientas MCP autorizadas.
 
-> **Estado:** base Django ASGI con clientes, widget, generación con Celery, documentos RAG en pgvector, streaming SSE y adaptadores de texto para Telegram y WhatsApp mediante Baileys. Las URL reales del LLM y del servicio de embeddings aún no están configuradas. El frontend está en otro repositorio; faltan herramientas MCP.
+> **Estado:** base Django ASGI con clientes, widget, generación con Celery, documentos RAG en pgvector, streaming SSE y adaptadores de texto para Telegram y WhatsApp mediante Baileys. Hay endpoints de prueba para el LLM (Ollama) y los embeddings (Voyage AI), pendientes de una prueba de extremo a extremo. El frontend está en otro repositorio; faltan herramientas MCP. Consulta [Pendientes](docs/pendientes.md).
 
 ## Documentación
 
@@ -13,6 +13,7 @@ Backend para un chatbot multiempresa que podrá atender un widget web y canales 
 - [RAG y streaming](docs/rag-y-streaming.md): carga de documentos, procesamiento, recuperación y eventos SSE.
 - [Telegram y WhatsApp con Baileys](docs/canales-telegram-baileys.md): alta, credenciales, emparejamiento, API interna y límites operativos.
 - [Despliegue en Railway](docs/despliegue-railway.md): servicios, variables, migraciones y límites del plan gratuito.
+- [Pendientes](docs/pendientes.md): lo que falta por implementar o mejorar, por prioridad.
 
 ## Stack previsto
 

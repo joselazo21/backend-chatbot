@@ -300,6 +300,8 @@ volumes:
   redis_data:
 ```
 
+El `compose.yaml` real del repositorio difiere de esta plantilla: tiene un solo `worker` para la cola `messages`, que también procesa la ingesta, y un servicio opcional `baileys`. Separar `worker_ingest` sigue pendiente (ver [Pendientes](pendientes.md)).
+
 La API es el único servicio expuesto al equipo local; DB y Redis solo son accesibles entre contenedores. `depends_on: service_healthy` espera disponibilidad básica, pero **no ejecuta migraciones**. El volumen de código y `--reload` son comodidades de desarrollo.
 
 ### `backend/config/asgi.py` y streaming
