@@ -13,6 +13,7 @@ from django_tenants.utils import get_public_schema_name, schema_context, tenant_
 from customers.models import ChannelAccount
 
 from .channel_views import baileys_ack, baileys_inbound, telegram_webhook
+from .channel_tasks import send_telegram_reply
 from .channels import accept_inbound, acknowledge_baileys_reply, lease_baileys_reply, queue_channel_reply, secret_matches
 from .models import AssistantRun, ChannelConversation, InboundChannelMessage, Message, OutboundChannelMessage
 
@@ -106,6 +107,41 @@ class ChannelHostTests(TenantTestCase):
         self.assertEqual(rejected.status_code, 401)
         self.assertEqual(response.status_code, 200)
         accepted.assert_called_once()
+
+
+class TelegramSendTests(TenantTestCase):
+    def test_reply_is_sent_without_locking_nullable_joins(self):
+        # PostgreSQL rejects FOR UPDATE over the nullable side of the joins this task loads.
+        with schema_context(get_public_schema_name()):
+            account = ChannelAccount.objects.create(
+                tenant=self.tenant,
+                provider="telegram",
+                name="test",
+                secret_digest=hashlib.sha256(b"secret").hexdigest(),
+                telegram_token_env="TELEGRAM_BOT_TOKEN_TEST",
+            )
+        with patch.object(settings, "LLM_CHAT_URL", "https://llm.example.test/v1/chat/completions"), patch(
+            "conversations.channels.dispatch_assistant_run"
+        ):
+            user_message, _ = accept_inbound(account, "7", "7:1", "Hola")
+        with tenant_context(self.tenant):
+            run = AssistantRun.objects.get(user_message=user_message)
+            run.assistant_message = Message.objects.create(
+                conversation=user_message.conversation, role=Message.Role.ASSISTANT, content="Respuesta"
+            )
+            run.status = AssistantRun.Status.COMPLETED
+            run.save(update_fields=["assistant_message", "status"])
+            delivery = OutboundChannelMessage.objects.create(assistant_run=run)
+
+        with patch("conversations.channel_tasks._telegram_token", return_value="token"), patch(
+            "conversations.channel_tasks._send_telegram", return_value="55"
+        ) as sent:
+            send_telegram_reply(self.tenant.pk, delivery.pk)
+
+        sent.assert_called_once_with("token", "7", "Respuesta")
+        with tenant_context(self.tenant):
+            delivery.refresh_from_db()
+            self.assertEqual(delivery.status, OutboundChannelMessage.Status.SENT)
 
 
 class ChannelPersistenceTests(TenantTestCase):
