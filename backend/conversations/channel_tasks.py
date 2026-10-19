@@ -46,7 +46,7 @@ def send_telegram_reply(tenant_id, delivery_id):
     with tenant_context(tenant):
         with transaction.atomic():
             delivery = (
-                OutboundChannelMessage.objects.select_for_update()
+                OutboundChannelMessage.objects.select_for_update(of=("self",))
                 .select_related("assistant_run__assistant_message", "assistant_run__user_message__conversation__channel_binding")
                 .filter(pk=delivery_id)
                 .first()
