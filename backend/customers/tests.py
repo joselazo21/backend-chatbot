@@ -1,4 +1,6 @@
+import os
 from io import StringIO
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
@@ -73,6 +75,16 @@ class TenantIsolationTests(TenantTestCase):
             with connection.cursor() as cursor:
                 cursor.execute("SELECT to_regclass('public.conversations_conversation')")
                 self.assertIsNone(cursor.fetchone()[0])
+
+    def test_prepare_railway_keeps_domain_owned_by_a_customer(self):
+        customer_domain = Domain.objects.get(tenant=self.tenant).domain
+        with patch.dict(os.environ, {"RAILWAY_PUBLIC_DOMAIN": customer_domain}):
+            with patch("customers.management.commands.prepare_railway.call_command") as mocked:
+                call_command("prepare_railway", stdout=StringIO())
+
+        bootstrapped = [call.kwargs["domain"] for call in mocked.call_args_list if call.args[0] == "bootstrap_public_tenant"]
+        self.assertEqual(bootstrapped, ["healthcheck.railway.app"])
+        self.assertEqual(Domain.objects.get(domain=customer_domain).tenant_id, self.tenant.pk)
 
     def test_service_api_is_bound_to_customer_and_domain(self):
         client_a = TenantClient(self.tenant)
