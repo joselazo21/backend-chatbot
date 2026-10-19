@@ -13,8 +13,7 @@ from .channels import accept_inbound, acknowledge_baileys_reply, lease_baileys_r
 
 
 def _account(request, account_id, provider, secret):
-    if request.tenant.schema_name != get_public_schema_name():
-        return None
+    # The account is found by id and secret in the public schema, whatever domain received the request.
     with schema_context(get_public_schema_name()):
         account = ChannelAccount.objects.select_related("tenant").filter(
             pk=account_id, provider=provider, is_active=True
