@@ -3,6 +3,7 @@ import qrcode from 'qrcode-terminal'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isAllowed, parseAllowed } from './allowlist.mjs'
 
 const baseUrl = (process.env.DJANGO_INTERNAL_URL || '').replace(/\/$/, '')
 const channelId = process.env.BAILEYS_CHANNEL_ID || ''
@@ -15,6 +16,11 @@ const sentDir = join(dataDir, 'sent')
 if (!baseUrl || !channelId || !secret) {
   throw new Error('DJANGO_INTERNAL_URL, BAILEYS_CHANNEL_ID and BAILEYS_CHANNEL_SECRET are required')
 }
+const allowedSenders = parseAllowed(process.env.BAILEYS_ALLOWED_NUMBERS)
+if (allowedSenders.length === 0) {
+  console.warn('BAILEYS_ALLOWED_NUMBERS is not set: every private chat will receive replies')
+}
+const ignoredSenders = new Set()
 const endpoint = `${baseUrl}/channels/baileys/${channelId}`
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 let socket
@@ -138,6 +144,13 @@ async function connect() {
         const jid = message.key?.remoteJid
         const id = message.key?.id
         if (message.key?.fromMe || !jid || !(jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid')) || !id) continue
+        if (!isAllowed(allowedSenders, jid)) {
+          if (!ignoredSenders.has(jid)) {
+            ignoredSenders.add(jid)
+            console.log(`Ignored message from a sender that is not in BAILEYS_ALLOWED_NUMBERS: ${jid}`)
+          }
+          continue
+        }
         const content = textOf(message).trim()
         if (!content || content.length > 4000 || content.includes('\x00')) continue
         enqueueInbound({ chat_id: jid, message_id: id, content }).catch(console.error)

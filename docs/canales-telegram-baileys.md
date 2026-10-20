@@ -50,6 +50,8 @@ docker compose logs -f baileys
 
 Escanea el QR que aparece en los logs con WhatsApp. El estado de autenticación y las claves de Signal se guardan en el volumen `baileys_auth`, nunca en Git. Protege y respalda ese volumen; perderlo exige volver a emparejar. El puente guarda también los eventos entrantes pendientes y los comprobantes de envío en ese volumen. Para varias cuentas, despliega una instancia del puente por cuenta con volumen y variables propios.
 
+Para que el puente responda solo a ciertos remitentes, define `BAILEYS_ALLOWED_NUMBERS` con una lista separada por comas, por ejemplo `55161759` o `5355161759, 8855161759@lid`. Un número se compara por sufijo, así que el prefijo del país es opcional, y solo vale para chats individuales (`@s.whatsapp.net`). Algunos contactos llegan como `@lid` en lugar de su número; para esos hay que indicar el identificador exacto, que el puente registra en los logs al descartar un mensaje (`Ignored message from a sender that is not in BAILEYS_ALLOWED_NUMBERS: ...`). Sin la variable el puente responde a cualquier chat individual y lo avisa al arrancar. Una lista con entradas inválidas hace fallar el arranque, en lugar de permitir a todos.
+
 La API interna del puente es:
 
 | Método | Ruta | Propósito |
