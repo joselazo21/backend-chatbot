@@ -99,7 +99,7 @@ def lease_baileys_reply(account):
     with tenant_context(account.tenant):
         with transaction.atomic():
             candidate = (
-                OutboundChannelMessage.objects.select_for_update(skip_locked=True)
+                OutboundChannelMessage.objects.select_for_update(skip_locked=True, of=("self",))
                 .filter(assistant_run__user_message__conversation__channel_binding__channel_account_id=account.pk)
                 .filter(status__in=[OutboundChannelMessage.Status.PENDING, OutboundChannelMessage.Status.LEASED])
                 .order_by("created_at")
@@ -137,7 +137,7 @@ def acknowledge_baileys_reply(account, delivery_id, lease_token, provider_messag
     with tenant_context(account.tenant):
         with transaction.atomic():
             delivery = (
-                OutboundChannelMessage.objects.select_for_update()
+                OutboundChannelMessage.objects.select_for_update(of=("self",))
                 .filter(pk=delivery_id, assistant_run__user_message__conversation__channel_binding__channel_account_id=account.pk)
                 .first()
             )
