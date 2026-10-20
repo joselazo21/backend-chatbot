@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isAllowed, parseAllowed } from './allowlist.mjs'
+import { createClient } from './django-client.mjs'
 
 const baseUrl = (process.env.DJANGO_INTERNAL_URL || '').replace(/\/$/, '')
 const channelId = process.env.BAILEYS_CHANNEL_ID || ''
@@ -22,6 +23,7 @@ if (allowedSenders.length === 0) {
 }
 const ignoredSenders = new Set()
 const endpoint = `${baseUrl}/channels/baileys/${channelId}`
+const api = createClient({ endpoint, secret, publicHost })
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 let socket
 let connected = false
@@ -53,21 +55,6 @@ async function enqueueInbound(payload) {
   const path = join(inboxDir, `${name}.json`)
   await atomicJson(path, payload)
   if (!inboundQueue.some(item => item.path === path)) inboundQueue.push({ path, payload })
-}
-
-async function api(path, method = 'GET', body) {
-  const response = await fetch(`${endpoint}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${secret}`,
-      Host: publicHost,
-      ...(body ? { 'Content-Type': 'application/json' } : {})
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(20000)
-  })
-  if (!response.ok) throw new Error(`Django returned HTTP ${response.status}`)
-  return response.status === 204 ? null : response.json()
 }
 
 function textOf(message) {
