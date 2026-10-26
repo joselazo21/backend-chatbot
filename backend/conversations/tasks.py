@@ -113,6 +113,10 @@ def _record_failure(run_id, error):
             run.status = AssistantRun.Status.PENDING
             run.next_attempt_at = timezone.now() + timedelta(seconds=10 * (3 ** (run.attempts - 1)))
         run.save(update_fields=["status", "error_code", "started_at", "next_attempt_at", "streamed_content", "updated_at"])
+        logger.warning(
+            "Assistant run %s %s after attempt %s: %s (retryable=%s)",
+            run_id, run.status, run.attempts, error.code, error.retryable,
+        )
 
 
 @shared_task(name="conversations.tasks.generate_assistant_reply")
@@ -151,6 +155,7 @@ def generate_assistant_reply(tenant_id, run_id):
                 run.status = AssistantRun.Status.FAILED
                 run.error_code = "channel_inactive" if channel_binding else "session_inactive"
                 run.save(update_fields=["status", "error_code", "updated_at"])
+                logger.warning("Assistant run %s failed: %s", run_id, run.error_code)
                 return
             earlier_open = AssistantRun.objects.filter(
                 user_message__conversation_id=run.user_message.conversation_id,
