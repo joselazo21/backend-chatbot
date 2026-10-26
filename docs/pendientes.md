@@ -90,7 +90,7 @@ Configurado en `.env` local, pendiente de prueba de extremo a extremo:
 ## 7. Fases posteriores
 
 - Traspaso de la conversación a un agente humano.
-- Botones, respuestas rápidas y adjuntos en el widget; audios y archivos en Telegram y WhatsApp.
+- Botones, respuestas rápidas y adjuntos en el widget; archivos en Telegram y WhatsApp. Los audios ya se transcriben en el widget y en Telegram (Speaches); falta WhatsApp/Baileys (`audioMessage`) y responder con voz.
 - WhatsApp mediante la Cloud API oficial si Baileys no resulta estable para clientes.
 - Panel de administración propio y analítica.
 - Canales adicionales: Slack, Discord, email.

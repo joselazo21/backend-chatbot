@@ -35,6 +35,18 @@ class Message(models.Model):
         indexes = [models.Index(fields=["conversation", "id"])]
 
 
+class AudioAttachment(models.Model):
+    """Audio waiting to be transcribed; it is deleted as soon as the transcript is stored."""
+
+    message = models.OneToOneField(Message, on_delete=models.CASCADE, related_name="audio")
+    # Web and worker do not share a disk, so widget audio travels through the database.
+    data = models.BinaryField(null=True, blank=True)
+    content_type = models.CharField(max_length=64, blank=True)
+    # Telegram voice notes are fetched by the worker from this provider file id instead.
+    telegram_file_id = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class AssistantRun(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
