@@ -33,7 +33,12 @@ def generate_reply(messages, on_delta=None):
         {"model": settings.LLM_MODEL, "messages": messages, "stream": on_delta is not None},
         ensure_ascii=False,
     ).encode("utf-8")
-    headers = {"Content-Type": "application/json", "Accept": "text/event-stream" if on_delta else "application/json"}
+    # Some providers (Groq behind Cloudflare) reject the default Python-urllib User-Agent with a 403.
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream" if on_delta else "application/json",
+        "User-Agent": "chatbot-backend/1.0",
+    }
     if settings.LLM_API_TOKEN:
         headers["Authorization"] = f"Bearer {settings.LLM_API_TOKEN}"
     request = Request(url, data=payload, headers=headers, method="POST")

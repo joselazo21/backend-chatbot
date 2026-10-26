@@ -22,6 +22,8 @@ class LLMTransportTests(SimpleTestCase):
         request = send.call_args.args[0]
         self.assertEqual(request.full_url, "http://llm.railway.internal:8000/v1/chat/completions")
         self.assertEqual(request.get_header("Authorization"), "Bearer private-token")
+        # The default Python-urllib agent is blocked by Cloudflare-fronted providers such as Groq.
+        self.assertEqual(request.get_header("User-agent"), "chatbot-backend/1.0")
         self.assertEqual(json.loads(request.data)["messages"], [{"role": "user", "content": "Hola"}])
 
     def test_classifies_upstream_errors_without_exposing_response_body(self):
