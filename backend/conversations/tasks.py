@@ -16,7 +16,8 @@ from knowledge.embeddings import EmbeddingError
 from knowledge.retrieval import retrieve_context
 
 from .llm import LLMError, generate_reply
-from .models import AssistantRun, ChannelConversation, Message, WidgetSession
+from .models import AssistantRun, AudioAttachment, ChannelConversation, Message, WidgetSession
+from .transcription import TranscriptionError, transcribe_audio
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
@@ -64,6 +65,37 @@ def _history_for_run(run):
     return [message for pair in turns for message in pair]
 
 
+def _transcribe_pending_audio(run, tenant, channel_binding):
+    """Turn a voice message into its text before retrieval and generation."""
+    audio = AudioAttachment.objects.filter(message_id=run.user_message_id).first()
+    if audio is None:
+        return
+    if not settings.WHISPER_URL:
+        raise TranscriptionError("invalid_configuration", retryable=False)
+    if audio.data is not None:
+        data, content_type = bytes(audio.data), audio.content_type
+    elif audio.telegram_file_id and channel_binding:
+        from .channel_tasks import fetch_telegram_audio
+
+        with schema_context(get_public_schema_name()):
+            account = ChannelAccount.objects.filter(
+                pk=channel_binding.channel_account_id, tenant=tenant, provider="telegram", is_active=True
+            ).first()
+        if account is None:
+            raise TranscriptionError("channel_inactive", retryable=False)
+        data, content_type = fetch_telegram_audio(account, audio.telegram_file_id)
+    else:
+        raise TranscriptionError("invalid_audio", retryable=False)
+    text = transcribe_audio(data, content_type)
+    with transaction.atomic():
+        Message.objects.filter(pk=run.user_message_id).update(content=text)
+        audio.delete()
+    run.user_message.content = text
+    AssistantRun.objects.filter(pk=run.pk, status=AssistantRun.Status.RUNNING).update(
+        started_at=timezone.now()
+    )
+
+
 def _record_failure(run_id, error):
     with transaction.atomic():
         run = AssistantRun.objects.select_for_update().get(pk=run_id)
@@ -75,6 +107,8 @@ def _record_failure(run_id, error):
             run.status = AssistantRun.Status.FAILED
             run.next_attempt_at = None
             run.streamed_content = ""
+            # No more retries will need the audio, so do not keep it.
+            AudioAttachment.objects.filter(message_id=run.user_message_id).delete()
         else:
             run.status = AssistantRun.Status.PENDING
             run.next_attempt_at = timezone.now() + timedelta(seconds=10 * (3 ** (run.attempts - 1)))
@@ -132,6 +166,7 @@ def generate_assistant_reply(tenant_id, run_id):
             run.save(update_fields=["status", "started_at", "attempts", "streamed_content", "updated_at"])
 
         try:
+            _transcribe_pending_audio(run, tenant, channel_binding)
             history = _history_for_run(run)
             context, sources = retrieve_context(run.user_message.content)
             if context:
@@ -166,7 +201,7 @@ def generate_assistant_reply(tenant_id, run_id):
         except EmbeddingError as error:
             _record_failure(run_id, LLMError("retrieval_" + error.code, retryable=error.retryable))
             return
-        except LLMError as error:
+        except (LLMError, TranscriptionError) as error:
             _record_failure(run_id, error)
             return
         except Exception:
@@ -202,7 +237,9 @@ def dispatch_pending_assistant_runs():
     with schema_context(get_public_schema_name()):
         tenants = list(Customer.objects.exclude(schema_name=get_public_schema_name()))
     now = timezone.now()
-    stale_before = now - timedelta(seconds=max(120, settings.LLM_TIMEOUT_SECONDS * 2))
+    # started_at is refreshed after transcription, so each phase gets its own window.
+    slowest_phase = max(settings.LLM_TIMEOUT_SECONDS, settings.WHISPER_TIMEOUT_SECONDS if settings.WHISPER_URL else 0)
+    stale_before = now - timedelta(seconds=max(120, slowest_phase * 2))
     dispatched = 0
     for tenant in tenants:
         with tenant_context(tenant):

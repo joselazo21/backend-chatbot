@@ -6,7 +6,7 @@ Los dos adaptadores entregan `{canal, chat externo, mensaje externo, texto}` al 
 
 Telegram entrega eventos a Django por HTTPS. La respuesta sale por `sendMessage` desde Celery. Baileys abre una conexión saliente a WhatsApp Web; su proceso Node entrega mensajes entrantes a Django y consulta las respuestas pendientes por la API interna. **WhatsApp no llama a un webhook de Django cuando se usa Baileys.**
 
-Se admiten mensajes de texto de chats privados/individuales. Grupos, archivos, audios, ediciones y reacciones quedan fuera de esta primera integración.
+Se admiten mensajes de texto de chats privados/individuales. Grupos, archivos, ediciones y reacciones quedan fuera de esta primera integración. Las **notas de voz de Telegram** se transcriben si `WHISPER_URL` está configurada (el webhook guarda solo el `file_id`; el worker descarga el audio con el token del bot, lo transcribe y sigue el flujo normal). Los audios de WhatsApp aún no se admiten.
 
 ## Preparación
 

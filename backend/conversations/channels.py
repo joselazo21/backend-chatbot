@@ -13,6 +13,7 @@ from django_tenants.utils import tenant_context
 
 from .models import (
     AssistantRun,
+    AudioAttachment,
     ChannelConversation,
     Conversation,
     InboundChannelMessage,
@@ -30,15 +31,18 @@ def secret_matches(raw_secret, digest):
     return hmac.compare_digest(hashlib.sha256(raw_secret.encode()).hexdigest(), digest)
 
 
-def accept_inbound(account, external_chat_id, external_message_id, content):
+def accept_inbound(account, external_chat_id, external_message_id, content, *, telegram_file_id=""):
     """Return (message, created); a repeated provider event cannot create a second run."""
     if not all(isinstance(value, str) for value in (external_chat_id, external_message_id, content)):
         raise ValueError("invalid_message")
     content = content.strip()
+    # A voice note has no text yet; the worker fills it in after transcription.
+    if telegram_file_id and (not isinstance(telegram_file_id, str) or len(telegram_file_id) > 255 or content):
+        raise ValueError("invalid_message")
     if (
         not external_chat_id or len(external_chat_id) > 255
         or not external_message_id or len(external_message_id) > 255
-        or not content or len(content) > 4000 or "\x00" in content
+        or (not content and not telegram_file_id) or len(content) > 4000 or "\x00" in content
     ):
         raise ValueError("invalid_message")
     try:
@@ -48,14 +52,14 @@ def accept_inbound(account, external_chat_id, external_message_id, content):
     with tenant_context(account.tenant):
         for attempt in range(3):
             try:
-                return _accept_once(account, external_chat_id, external_message_id, content)
+                return _accept_once(account, external_chat_id, external_message_id, content, telegram_file_id)
             except IntegrityError:
                 # Concurrent deliveries can race when creating the chat or event.
                 if attempt == 2:
                     raise
 
 
-def _accept_once(account, external_chat_id, external_message_id, content):
+def _accept_once(account, external_chat_id, external_message_id, content, telegram_file_id=""):
     with transaction.atomic():
         existing = InboundChannelMessage.objects.filter(
             channel_account_id=account.pk, external_message_id=external_message_id
@@ -80,6 +84,8 @@ def _accept_once(account, external_chat_id, external_message_id, content):
             external_message_id=external_message_id,
             message=message,
         )
+        if telegram_file_id:
+            AudioAttachment.objects.create(message=message, telegram_file_id=telegram_file_id)
         if settings.LLM_CHAT_URL:
             run = AssistantRun.objects.create(user_message=message)
             transaction.on_commit(lambda: dispatch_assistant_run(account.tenant_id, run.pk))

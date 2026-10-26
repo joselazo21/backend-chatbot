@@ -10,6 +10,7 @@ Backend para un chatbot multiempresa que podrá atender un widget web y canales 
 - [Guía de despliegue](docs/guidelines-despliegue-chatbot.md): decisiones pendientes y controles operativos. Las plantillas de esa guía son orientativas; los archivos ejecutables de este repositorio están en `backend/` y `compose.yaml`.
 - [API de servicio v1](docs/api-servicio-v1.md): alta de clientes, credenciales y rutas disponibles.
 - [Widget público](docs/widget-bootstrap-api.md): registro de sitios, descubrimiento, sesiones, mensajes y estados de generación que consumirá el frontend.
+- [Guía para desarrollar el widget](docs/guia-desarrollo-widget.md): contrato completo del backend para el desarrollador del frontend, entorno desplegado y límites actuales.
 - [RAG y streaming](docs/rag-y-streaming.md): carga de documentos, procesamiento, recuperación y eventos SSE.
 - [Telegram y WhatsApp con Baileys](docs/canales-telegram-baileys.md): alta, credenciales, emparejamiento, API interna y límites operativos.
 - [Despliegue en Railway](docs/despliegue-railway.md): servicios, variables, migraciones y límites del plan gratuito.

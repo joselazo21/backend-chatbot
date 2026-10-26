@@ -17,8 +17,9 @@ from django_tenants.utils import get_public_schema_name
 from customers.models import WidgetSite
 from customers.validation import normalize_origin
 
-from .models import AssistantRun, Conversation, Message, WidgetSession
+from .models import AssistantRun, AudioAttachment, Conversation, Message, WidgetSession
 from .tasks import dispatch_assistant_run
+from .transcription import normalize_content_type
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,8 @@ def _serialize_message(message):
             result["generation_status"] = message.assistant_run.status
         except AssistantRun.DoesNotExist:
             result["generation_status"] = "unconfigured"
+        # True while a voice message still has no text; content is empty until then.
+        result["awaiting_transcription"] = getattr(message, "audio", None) is not None
     return result
 
 
@@ -234,7 +237,7 @@ def widget_messages(request):
             )
         messages = list(
             Message.objects.filter(conversation_id=session.conversation_id, id__gt=cursor)
-            .select_related("assistant_run")
+            .select_related("assistant_run", "audio")
             .order_by("id")[:51]
         )
         has_more = len(messages) > 50
@@ -295,6 +298,63 @@ def widget_messages(request):
     return _cors(JsonResponse(_serialize_message(message), status=201), origin, methods, headers)
 
 
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def widget_audio_messages(request):
+    origin = _allowed_session_origin(request)
+    methods = "POST"
+    headers = "Authorization"
+    if request.method == "OPTIONS":
+        return _cors(HttpResponse(status=204), origin, methods, headers)
+
+    session = _authenticated_session(request, origin)
+    if session is None:
+        return _unauthorized(origin, methods, headers)
+    if not (settings.WHISPER_URL and settings.LLM_CHAT_URL):
+        return _cors(JsonResponse({"error": "audio_unavailable"}, status=503), origin, methods, headers)
+
+    if not request.content_type.startswith("multipart/form-data"):
+        return _cors(JsonResponse({"error": "multipart_required"}, status=415), origin, methods, headers)
+    try:
+        declared = int(request.META.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        declared = 0
+    # Leave room for the multipart envelope around the file itself.
+    if declared <= 0 or declared > settings.WHISPER_MAX_AUDIO_BYTES + 4096:
+        return _cors(JsonResponse({"error": "body_too_large"}, status=413), origin, methods, headers)
+    upload = request.FILES.get("audio")
+    if upload is None or set(request.FILES) != {"audio"} or request.POST:
+        return _cors(JsonResponse({"error": "invalid_request"}, status=400), origin, methods, headers)
+    content_type = normalize_content_type(upload.content_type)
+    if content_type is None:
+        return _cors(JsonResponse({"error": "unsupported_audio"}, status=415), origin, methods, headers)
+    if upload.size < 1 or upload.size > settings.WHISPER_MAX_AUDIO_BYTES:
+        return _cors(JsonResponse({"error": "body_too_large"}, status=413), origin, methods, headers)
+    data = upload.read()
+
+    try:
+        allowed = _within_limit(
+            f"widget-message:session:{session.pk}", settings.WIDGET_MESSAGE_LIMIT_PER_MINUTE
+        )
+    except Exception:
+        logger.exception("Widget message rate limiter unavailable")
+        return _cors(JsonResponse({"error": "unavailable"}, status=503), origin, methods, headers)
+    if not allowed:
+        response = JsonResponse({"error": "rate_limited"}, status=429)
+        response["Retry-After"] = "60"
+        return _cors(response, origin, methods, headers)
+
+    with transaction.atomic():
+        message = Message.objects.create(
+            conversation_id=session.conversation_id, role=Message.Role.USER, content=""
+        )
+        AudioAttachment.objects.create(message=message, data=data, content_type=content_type)
+        run = AssistantRun.objects.create(user_message=message)
+        tenant_id = request.tenant.pk
+        transaction.on_commit(lambda: dispatch_assistant_run(tenant_id, run.pk))
+    return _cors(JsonResponse(_serialize_message(message), status=201), origin, methods, headers)
+
+
 @require_http_methods(["GET", "OPTIONS"])
 def widget_message_generation(request, message_id):
     origin = _allowed_session_origin(request)
@@ -307,7 +367,7 @@ def widget_message_generation(request, message_id):
         pk=message_id,
         conversation_id=session.conversation_id,
         role=Message.Role.USER,
-    ).select_related("assistant_run").first()
+    ).select_related("assistant_run", "audio").first()
     if message is None:
         raise Http404
     status = _serialize_message(message)["generation_status"]

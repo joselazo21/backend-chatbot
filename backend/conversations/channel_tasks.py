@@ -8,6 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from django_tenants.utils import get_public_schema_name, schema_context, tenant_context
@@ -15,6 +16,7 @@ from django_tenants.utils import get_public_schema_name, schema_context, tenant_
 from customers.models import ChannelAccount, Customer
 
 from .models import OutboundChannelMessage
+from .transcription import TranscriptionError
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,33 @@ def _send_telegram(token, chat_id, content):
     if not payload.get("ok") or not isinstance(payload.get("result"), dict):
         raise ValueError("invalid_provider_response")
     return str(payload["result"].get("message_id", ""))
+
+
+def fetch_telegram_audio(account, file_id):
+    """Download a voice note by its Telegram file id; return (bytes, content_type)."""
+    token = _telegram_token(account)
+    if not token:
+        raise TranscriptionError("token_missing", retryable=False)
+    try:
+        request = Request(
+            f"https://api.telegram.org/bot{token}/getFile",
+            data=json.dumps({"file_id": file_id}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=15) as response:
+            result = json.load(response).get("result")
+        if not isinstance(result, dict) or not isinstance(result.get("file_path"), str):
+            raise TranscriptionError("invalid_audio", retryable=False)
+        if result.get("file_size", 0) > settings.WHISPER_MAX_AUDIO_BYTES:
+            raise TranscriptionError("invalid_audio", retryable=False)
+        with urlopen(
+            f"https://api.telegram.org/file/bot{token}/{result['file_path']}", timeout=30
+        ) as response:
+            data = response.read(settings.WHISPER_MAX_AUDIO_BYTES + 1)
+    except (HTTPError, URLError, TimeoutError, ValueError, OSError) as error:
+        raise TranscriptionError("telegram_download_failed", retryable=True) from error
+    return data, "audio/ogg"
 
 
 @shared_task(name="conversations.channel_tasks.send_telegram_reply")

@@ -2,6 +2,7 @@
 
 import json
 
+from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -56,11 +57,23 @@ def telegram_webhook(request, account_id):
         chat = message.get("chat")
         if not isinstance(chat, dict) or chat.get("type") != "private" or not isinstance(chat.get("id"), int):
             return HttpResponse(status=200)
-        if not isinstance(message.get("message_id"), int) or not isinstance(message.get("text"), str):
+        if not isinstance(message.get("message_id"), int):
             return HttpResponse(status=200)
-        accept_inbound(
-            account, str(chat["id"]), f'{chat["id"]}:{message["message_id"]}', message["text"]
-        )
+        external_id = f'{chat["id"]}:{message["message_id"]}'
+        if isinstance(message.get("text"), str):
+            accept_inbound(account, str(chat["id"]), external_id, message["text"])
+        else:
+            # Voice notes and audio files; anything else is ignored. Needs transcription configured.
+            voice = message.get("voice") or message.get("audio")
+            if (
+                settings.WHISPER_URL
+                and isinstance(voice, dict)
+                and isinstance(voice.get("file_id"), str)
+                and voice.get("file_size", 0) <= settings.WHISPER_MAX_AUDIO_BYTES
+            ):
+                accept_inbound(
+                    account, str(chat["id"]), external_id, "", telegram_file_id=voice["file_id"]
+                )
     except (ValueError, UnicodeDecodeError):
         return JsonResponse({"error": "invalid_request"}, status=400)
     return HttpResponse(status=200)

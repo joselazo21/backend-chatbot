@@ -6,6 +6,7 @@ from conversations.stream import widget_message_events
 from conversations.widget_views import (
     create_widget_session,
     current_widget_session,
+    widget_audio_messages,
     widget_message_generation,
     widget_messages,
 )
@@ -24,6 +25,7 @@ urlpatterns = [
     path("widget/v1/sessions/", create_widget_session, name="widget_session_create"),
     path("widget/v1/sessions/current", current_widget_session, name="widget_session_current"),
     path("widget/v1/messages/", widget_messages, name="widget_messages"),
+    path("widget/v1/messages/audio/", widget_audio_messages, name="widget_audio_messages"),
     path(
         "widget/v1/messages/<int:message_id>/generation/",
         widget_message_generation,

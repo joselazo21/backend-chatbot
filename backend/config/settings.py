@@ -84,11 +84,21 @@ EMBEDDING_URL = os.environ.get("EMBEDDING_URL", "").strip()
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "").strip()
 EMBEDDING_API_TOKEN = os.environ.get("EMBEDDING_API_TOKEN", "")
 EMBEDDING_TIMEOUT_SECONDS = int(os.environ.get("EMBEDDING_TIMEOUT_SECONDS", "60"))
+WHISPER_URL = os.environ.get("WHISPER_URL", "").strip()
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "").strip()
+WHISPER_API_TOKEN = os.environ.get("WHISPER_API_TOKEN", "")
+WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "").strip()
+WHISPER_TIMEOUT_SECONDS = int(os.environ.get("WHISPER_TIMEOUT_SECONDS", "120"))
+WHISPER_MAX_AUDIO_BYTES = int(os.environ.get("WHISPER_MAX_AUDIO_BYTES", str(5 * 1024 * 1024)))
 MEDIA_ROOT = os.environ.get("DJANGO_MEDIA_ROOT", str(Path(__file__).resolve().parent.parent / "media"))
 if LLM_CHAT_URL and not LLM_MODEL:
     raise ImproperlyConfigured("LLM_MODEL is required when LLM_CHAT_URL is set")
 if LLM_TIMEOUT_SECONDS < 1:
     raise ImproperlyConfigured("LLM_TIMEOUT_SECONDS must be positive")
+if WHISPER_URL and not WHISPER_MODEL:
+    raise ImproperlyConfigured("WHISPER_MODEL is required when WHISPER_URL is set")
+if WHISPER_TIMEOUT_SECONDS < 1 or WHISPER_MAX_AUDIO_BYTES < 1:
+    raise ImproperlyConfigured("WHISPER_TIMEOUT_SECONDS and WHISPER_MAX_AUDIO_BYTES must be positive")
 if EMBEDDING_URL and not EMBEDDING_MODEL:
     raise ImproperlyConfigured("EMBEDDING_MODEL is required when EMBEDDING_URL is set")
 if EMBEDDING_TIMEOUT_SECONDS < 1:
