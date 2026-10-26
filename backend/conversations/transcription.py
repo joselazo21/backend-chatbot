@@ -69,6 +69,8 @@ def transcribe_audio(data, content_type):
     headers = {
         "Content-Type": f"multipart/form-data; boundary={boundary}",
         "Accept": "application/json",
+        # Cloudflare-fronted providers reject the default Python-urllib User-Agent.
+        "User-Agent": "chatbot-backend/1.0",
     }
     if settings.WHISPER_API_TOKEN:
         headers["Authorization"] = f"Bearer {settings.WHISPER_API_TOKEN}"

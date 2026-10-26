@@ -33,6 +33,7 @@ class TranscriptionTransportTests(SimpleTestCase):
         request = send.call_args.args[0]
         self.assertEqual(request.full_url, URL)
         self.assertEqual(request.get_header("Authorization"), "Bearer private-token")
+        self.assertEqual(request.get_header("User-agent"), "chatbot-backend/1.0")
         self.assertTrue(request.get_header("Content-type").startswith("multipart/form-data; boundary="))
         body = request.data
         self.assertIn(b'name="model"\r\n\r\nSystran/faster-whisper-small', body)
